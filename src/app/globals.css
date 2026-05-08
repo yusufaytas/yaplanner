@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+:root {
+  --background: #09090b;
+  --background-elevated: #111217;
+  --background-muted: #171923;
+  --foreground: #f4f4f5;
+  --foreground-muted: #a1a1aa;
+  --border: rgba(255, 255, 255, 0.1);
+  --accent: #7dd3fc;
+  --accent-strong: #38bdf8;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-background-elevated: var(--background-elevated);
+  --color-background-muted: var(--background-muted);
+  --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  color-scheme: dark;
+  background: #09090b;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), sans-serif;
+  min-height: 100vh;
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top, rgba(56, 189, 248, 0.14), transparent 32%),
+    radial-gradient(circle at 85% 15%, rgba(59, 130, 246, 0.12), transparent 24%),
+    linear-gradient(180deg, #0f1117 0%, #09090b 55%, #07080a 100%);
+}
+
+::selection {
+  background: rgba(125, 211, 252, 0.3);
+  color: var(--foreground);
+}
+
+* {
+  scrollbar-color: rgba(161, 161, 170, 0.35) transparent;
+}
+
+a,
+button {
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.3);
+  border-radius: 0.75rem;
+}
