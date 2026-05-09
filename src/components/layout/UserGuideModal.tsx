@@ -80,7 +80,7 @@ export function UserGuideModal() {
               {/* Getting started */}
               <Section title="Getting started">
                 <Rule>1. Create your <strong className="text-zinc-100">People</strong> and assign each a role (Engineer, EM, PM).</Rule>
-                <Rule>2. Create a <strong className="text-zinc-100">Quarter</strong> with a start and end date, then add people to it via the quarter's People tab.</Rule>
+                <Rule>2. Create a <strong className="text-zinc-100">Quarter</strong> with a start and end date, then add people to it via the quarter&apos;s People tab.</Rule>
                 <Rule>3. Create <strong className="text-zinc-100">Projects</strong> and add them to the quarter via the portfolio dashboard.</Rule>
                 <Rule>4. On each project page, assign a <strong className="text-zinc-100">DRI</strong> first, then add Engineers and other roles.</Rule>
                 <Rule>5. Set capacity allocations per engineer and an estimated person-weeks budget per project.</Rule>
@@ -123,7 +123,7 @@ export function UserGuideModal() {
                 </Rule>
                 <Rule>
                   Overhead can be set at the quarter level (applies to everyone) or overridden per person. A
-                  person-level override <em>replaces</em> the quarter defaults entirely — it doesn't add to them.
+                  person-level override <em>replaces</em> the quarter defaults entirely — it doesn&apos;t add to them.
                 </Rule>
                 <Rule>
                   <strong className="text-zinc-100">Allocation</strong> is a weekly percentage per engineer per project.
@@ -157,11 +157,11 @@ export function UserGuideModal() {
               {/* Portfolio */}
               <Section title="Portfolio dashboard">
                 <Rule>
-                  The quarter's portfolio view shows all projects in priority order. Drag to reorder.
+                  The quarter&apos;s portfolio view shows all projects in priority order. Drag to reorder.
                 </Rule>
                 <Rule>
                   The <strong className="text-zinc-100">capacity line</strong> is an optional marker you can set to
-                  visually separate projects that fit within capacity from those that don't.
+                  visually separate projects that fit within capacity from those that don&apos;t.
                 </Rule>
                 <Rule>
                   Each project row shows reserved vs. estimated person-weeks. A progress bar turns red when
@@ -170,7 +170,7 @@ export function UserGuideModal() {
               </Section>
 
               {/* Import / Export */}
-              <Section title="Import & export">
+              <Section title="Import, export & sync">
                 <Rule>
                   <strong className="text-zinc-100">Export</strong> saves all your data as a JSON file — useful for
                   backups or sharing with another browser.
@@ -178,6 +178,20 @@ export function UserGuideModal() {
                 <Rule>
                   <strong className="text-zinc-100">Import</strong> is a full replace: it clears all existing data
                   and restores from the file. It is not a merge.
+                </Rule>
+                <Rule>
+                  <strong className="text-zinc-100">Sync</strong> saves a backup file to Google Drive at{' '}
+                  <strong className="text-zinc-100">Yaplanner/yaplanner-backup.json</strong>.
+                </Rule>
+                <Rule>
+                  The first person saves the backup, then shares that Google Drive file URL. Anyone restoring must
+                  paste that file URL or file ID into the Sync modal first, then use <strong className="text-zinc-100">Restore from provided link</strong>.
+                </Rule>
+                <Rule>
+                  If the file is moved in Drive, the shared file URL or file ID still identifies the same backup target.
+                </Rule>
+                <Rule>
+                  <strong className="text-zinc-100">Auto-sync</strong> only runs while the app tab is open.
                 </Rule>
               </Section>
 

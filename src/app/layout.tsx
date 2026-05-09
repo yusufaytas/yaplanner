@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import Script from 'next/script';
 import './globals.css';
 import { AppNav } from '@/components/layout/AppNav';
 import { UserGuideModal } from '@/components/layout/UserGuideModal';
@@ -34,9 +35,9 @@ export default function RootLayout({
             {children}
           </main>
           <footer className="border-t border-white/10 bg-black/20">
-            <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-4 text-xs text-zinc-500 sm:px-6 lg:px-8">
-              <span>Yaplanner</span>
-              <div className="flex items-center gap-4">
+            <div className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 px-4 py-4 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+              <span className="shrink-0">Yaplanner</span>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <a
                   href="https://github.com/yusufaytas/yaplanner"
                   target="_blank"
@@ -46,11 +47,12 @@ export default function RootLayout({
                   GitHub
                 </a>
                 <UserGuideModal />
-                <span>Local-first engineering planning</span>
+                <span className="leading-relaxed">Local-first engineering planning</span>
               </div>
             </div>
           </footer>
         </div>
+        <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
       </body>
     </html>
   );

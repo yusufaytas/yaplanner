@@ -1,10 +1,10 @@
-# Yaplanner
+git# Yaplanner
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 A browser-only, local-first resourcing planner for engineering managers.
 
-All data stays in your browser via IndexedDB. No backend, no sync, no telemetry. Export and import your full plan as a JSON file.
+All data stays in your browser via IndexedDB. No backend and no telemetry. Export and import your full plan as a JSON file, and optionally store backups in Google Drive.
 
 ## What it does
 
@@ -16,6 +16,7 @@ All data stays in your browser via IndexedDB. No backend, no sync, no telemetry.
 - Project health signal (green / yellow / red) derived from open risks and unknowns
 - Engineer availability filter — only engineers with remaining capacity appear in project assignment dropdowns
 - Export full data as JSON; import to restore or share
+- Optional Google Drive backup sync using a visible `Yaplanner` folder
 
 ## Stack
 
@@ -33,6 +34,14 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). On first load the app is empty — click **Load sample data** on the overview page to populate it, or use **Import** in the top nav to load a previously exported file.
+
+To enable Google Drive sync, create a `.env.local` file with:
+
+```bash
+NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+```
+
+In Google Cloud, create a Web OAuth client and add your app URL to **Authorized JavaScript origins**. For local development this typically includes `http://localhost:3000`.
 
 ## Routes
 
@@ -72,7 +81,7 @@ An engineer only appears in the project assignment dropdown if:
 - They are not marked inactive
 - Their remaining capacity after existing project allocations is > 0
 
-## Import / Export
+## Import / Export / Drive Sync
 
 **Export** (top nav) — dumps all tables to a timestamped JSON file:
 ```json
@@ -80,6 +89,12 @@ An engineer only appears in the project assignment dropdown if:
 ```
 
 **Import** (top nav) — reads a JSON file, clears all tables, and restores from the file. Full replace, not a merge.
+
+**Sync** (top nav) — optionally signs into Google and stores the same backup JSON in `Google Drive/Yaplanner/yaplanner-backup.json`.
+
+The first save creates that file and gives you a Drive URL. Share that URL with anyone else who should use the same backup. To restore, they paste the shared file URL or file ID into the Sync modal, click **Use Link**, then **Restore from provided link**. Restore is still a full replace.
+
+Auto-sync is optional and runs every few minutes while the app tab is open.
 
 ## Development
 
