@@ -2,10 +2,9 @@ import { db } from '@/lib/db';
 import type { Table } from 'dexie';
 
 export const TABLES = [
-  'people', 'subteams', 'projects', 'projectLinks',
-  'projectStakeholders', 'quarters', 'quarterProjects', 'quarterPeople',
-  'projectRoles', 'allocations',
-  'unknowns', 'risks',
+  'people', 'subteams', 'projects',
+  'quarters', 'quarterProjects', 'quarterPeople',
+  'allocations',
 ] as const;
 
 export type BackupTableName = typeof TABLES[number];

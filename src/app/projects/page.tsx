@@ -3,13 +3,13 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useDeferredValue, useState } from 'react';
 import Link from 'next/link';
-import { db } from '@/lib/db';
 import { ProjectCard } from '@/components/projects/ProjectCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { buildProjectLeadershipMaps, splitProjectsByStatus } from '@/lib/project-directory';
-import { buildProjectHealthMap } from '@/lib/project-health';
+import { buildProjectHealthMap, getOverAllocatedProjectIds } from '@/lib/project-health';
 import { filterProjectsByTags, filterTagOptions, listProjectTags, normalizeProjectTag } from '@/lib/project-tags';
-import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
+import { createProject as createProjectRecord, deleteProjectCascade, getProjectsPageData } from '@/lib/projects';
+import { getActiveQuarter } from '@/lib/quarters';
 import type { ProjectStatus } from '@/lib/types';
 
 function uid() { return crypto.randomUUID(); }
@@ -26,25 +26,19 @@ export default function ProjectsPage() {
   const [showAllTags, setShowAllTags] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
-  const data = useLiveQuery(async () => {
-    const [projects, people, projectRoles, quarters, unknowns, risks] = await Promise.all([
-      db.projects.orderBy('name').toArray(),
-      db.people.toArray(),
-      db.projectRoles.toArray(),
-      listResolvedQuarters(),
-      db.unknowns.toArray(),
-      db.risks.toArray(),
-    ]);
-    return { projects, people, projectRoles, quarters, unknowns, risks };
-  });
+  const data = useLiveQuery(() => getProjectsPageData());
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
 
-  const { projects, people, projectRoles, quarters, unknowns, risks } = data;
+  const { projects, people, allocations, quarters, quarterPeople } = data;
   const personById = new Map(people.map((p) => [p.id, p]));
-  const activeQuarterId = getActiveQuarter(quarters)?.id;
-  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projectRoles, activeQuarterId ?? null);
-  const healthByProject = buildProjectHealthMap(projects, unknowns, risks);
+  const activeQuarter = getActiveQuarter(quarters);
+  const activeQuarterId = activeQuarter?.id;
+  const overAllocatedProjectIds = activeQuarter
+    ? getOverAllocatedProjectIds({ quarter: activeQuarter, people, quarterPeople, allocations })
+    : undefined;
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, allocations, activeQuarterId ?? null);
+  const healthByProject = buildProjectHealthMap(projects, undefined, undefined, overAllocatedProjectIds);
   const { activeProjects, archivedProjects } = splitProjectsByStatus(projects);
   const allTags = listProjectTags(projects);
   const visibleTags = filterTagOptions(allTags, deferredTagQuery);
@@ -54,14 +48,10 @@ export default function ProjectsPage() {
   const filteredActiveProjects = filterProjectsByTags(activeProjects, selectedTags);
   const filteredArchivedProjects = filterProjectsByTags(archivedProjects, selectedTags);
 
-  async function createProject() {
+  async function createProjectHandler() {
     if (!name.trim()) return;
     const id = uid();
-    await db.projects.add({
-      id, name: name.trim(), description: '', status,
-      tags: [],
-      owningSubteamId: null, createdAt: new Date().toISOString(), archivedAt: null,
-    });
+    await createProjectRecord({ id, name, status });
     setName(''); setAdding(false);
   }
 
@@ -74,7 +64,7 @@ export default function ProjectsPage() {
     );
   }
 
-  function renderProjectGrid(list: typeof projects) {
+  function renderProjectGrid(list: typeof projects, showStatus = false) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {list.map((project) => {
@@ -90,10 +80,11 @@ export default function ProjectsPage() {
                   em={emId ? personById.get(emId) : null}
                   pm={pmId ? personById.get(pmId) : null}
                   health={healthByProject.get(project.id)}
+                  showStatus={showStatus}
                 />
               </Link>
               <button
-                onClick={() => db.projects.delete(project.id)}
+                onClick={() => deleteProjectCascade(project.id, project.subteamId)}
                 className="absolute top-2 right-2 hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-zinc-500 hover:bg-rose-900/60 hover:text-rose-400 text-xs"
                 title="Delete project"
               >✕</button>
@@ -184,7 +175,7 @@ export default function ProjectsPage() {
             placeholder="Project name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') createProject(); if (e.key === 'Escape') setAdding(false); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') createProjectHandler(); if (e.key === 'Escape') setAdding(false); }}
             className="rounded border border-white/10 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 w-64 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
           />
           <select
@@ -196,7 +187,7 @@ export default function ProjectsPage() {
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
-          <button onClick={createProject} className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500">Create</button>
+          <button onClick={createProjectHandler} className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500">Create</button>
           <button onClick={() => setAdding(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Cancel</button>
         </div>
       )}
@@ -218,10 +209,10 @@ export default function ProjectsPage() {
             onClick={() => setShowArchived((v) => !v)}
             className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            <span className={`transition-transform ${showArchived ? 'rotate-90' : ''}`}>▶</span>
-            <span>Archived ({filteredArchivedProjects.length})</span>
+            <span className={`transition-transform inline-block ${showArchived ? 'rotate-90' : ''}`}>▶</span>
+            <span>Past Projects ({filteredArchivedProjects.length})</span>
           </button>
-          {showArchived && renderProjectGrid(filteredArchivedProjects)}
+          {showArchived && renderProjectGrid(filteredArchivedProjects, true)}
         </div>
       )}
     </div>

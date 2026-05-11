@@ -3,12 +3,10 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
 import { useState } from 'react';
-import { db } from '@/lib/db';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { QuarterStatus } from '@/lib/types';
-import { DEFAULT_OVERHEAD_ITEMS } from '@/lib/types';
-import { listResolvedQuarters, suggestNextQuarter, updateQuarterDraftEndDate, updateQuarterDraftStartDate } from '@/lib/quarters';
+import { createQuarter as createQuarterRecord, getQuartersPageData, suggestNextQuarter, updateQuarterDraftEndDate, updateQuarterDraftStartDate } from '@/lib/quarters';
 
 const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'warning' | 'neutral'> = {
   active: 'success',
@@ -20,9 +18,7 @@ const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'warning' | 'neu
 function uid() { return crypto.randomUUID(); }
 
 export default function QuartersPage() {
-  const quarters = useLiveQuery(() =>
-    listResolvedQuarters().then((allQuarters) => allQuarters.sort((a, b) => b.startDate.localeCompare(a.startDate))),
-  );
+  const quarters = useLiveQuery(() => getQuartersPageData());
 
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -31,21 +27,11 @@ export default function QuartersPage() {
   const [endDateManuallyEdited, setEndDateManuallyEdited] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  async function createQuarter() {
+  async function createQuarterHandler() {
     if (!name.trim() || !startDate || !endDate) return;
     setSaving(true);
     try {
-      await db.quarters.add({
-        id: uid(),
-        name: name.trim(),
-        startDate,
-        endDate,
-        status: 'draft',
-        createdAt: new Date().toISOString(),
-        createdFromQuarterId: null,
-        capacityLineAfter: null,
-        overhead: { items: DEFAULT_OVERHEAD_ITEMS.map((i) => ({ ...i })) },
-      });
+      await createQuarterRecord({ id: uid(), name, startDate, endDate });
       setAdding(false);
       setName('');
       setStartDate('');
@@ -98,7 +84,7 @@ export default function QuartersPage() {
             placeholder="Name — e.g. 2026-Q4"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') createQuarter(); if (e.key === 'Escape') cancel(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') createQuarterHandler(); if (e.key === 'Escape') cancel(); }}
             className={`${inputCls} w-36`}
           />
           <div className="flex items-center gap-1.5">
@@ -136,7 +122,7 @@ export default function QuartersPage() {
             />
           </div>
           <button
-            onClick={createQuarter}
+            onClick={createQuarterHandler}
             disabled={!name.trim() || !startDate || !endDate || saving}
             className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed"
           >

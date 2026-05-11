@@ -1,3 +1,5 @@
+export type Role = 'Engineer' | 'DRI' | 'EM' | 'PM' | 'Stakeholder';
+
 // ─── Global Persistent Entities ──────────────────────────────────────────────
 // These exist independently of any quarter. A project can span many quarters.
 
@@ -5,9 +7,9 @@ export interface Person {
   id: string;
   name: string;
   email: string | null;
-  role: string; // e.g. "Engineer", "EM", "PM"
+  role: Role;
   defaultCapacity: number; // default 100 (percent)
-  subteamId: string | null; // default subteam
+  subteamId: string | null;
   notes: string;
   createdAt: string;
 }
@@ -16,7 +18,6 @@ export interface Subteam {
   id: string;
   name: string;
   purpose: string | null;
-  driPersonId: string | null;
   createdAt: string;
 }
 
@@ -33,23 +34,18 @@ export interface Project {
   description: string;
   status: ProjectStatus;
   tags: string[];
-  owningSubteamId: string | null;
+  subteamId: string | null;
   createdAt: string;
   archivedAt: string | null;
+  links: ProjectLink[];
+  unknowns: Unknown[];
+  risks: Risk[];
 }
 
 export interface ProjectLink {
   id: string;
-  projectId: string;
   label: string;
   url: string;
-}
-
-export interface ProjectStakeholder {
-  id: string;
-  quarterId: string;
-  projectId: string;
-  personId: string;
 }
 
 // ─── Quarter Planning Entities ────────────────────────────────────────────────
@@ -114,28 +110,19 @@ export interface QuarterPerson {
   overheadOverride: CapacityOverhead | null;
 }
 
-export type ProjectRoleType = 'DRI' | 'EM' | 'PM' | 'Engineer';
-
-export interface ProjectRole {
-  id: string;
-  quarterId: string;
-  projectId: string;
-  personId: string;
-  role: ProjectRoleType;
-}
-
 export interface Allocation {
   id: string;
-  quarterId: string;
+  quarterId: string | null;
   personId: string;
-  projectId: string;
-  weekStart: string; // ISO date (Monday of the week)
+  projectId: string | null;
+  role: Role;
+  startDate: string | null;
+  endDate: string | null;
   percentage: number; // 1–100 inclusive
 }
 
 export interface Unknown {
   id: string;
-  projectId: string;
   quarterId: string;
   title: string;
   description: string; // supports @ mentions
@@ -149,7 +136,6 @@ export type RiskImpact = 'Low' | 'Medium' | 'High';
 
 export interface Risk {
   id: string;
-  projectId: string;
   quarterId: string;
   title: string;
   likelihood: RiskLikelihood;

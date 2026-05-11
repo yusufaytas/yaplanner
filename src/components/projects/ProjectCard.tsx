@@ -1,7 +1,8 @@
 import type { Project, Person } from '@/lib/types';
 import { type ProjectHealth, projectHealthMeta } from '@/lib/project-health';
-import { getProjectCardPersonName } from '@/lib/people-directory';
+import { getProjectCardPersonName } from '@/lib/people';
 import { getProjectTags } from '@/lib/project-tags';
+import { ProjectStatusBadge } from './ProjectStatusBadge';
 
 interface ProjectCardProps {
   project: Project;
@@ -9,9 +10,10 @@ interface ProjectCardProps {
   em?: Person | null;
   pm?: Person | null;
   health?: ProjectHealth;
+  showStatus?: boolean;
 }
 
-export function ProjectCard({ project, dri, em, pm, health }: ProjectCardProps) {
+export function ProjectCard({ project, dri, em, pm, health, showStatus }: ProjectCardProps) {
   const healthMeta = health ? projectHealthMeta[health] : null;
   const tags = getProjectTags(project).slice(0, 3);
   const visiblePeople = [dri, em, pm];
@@ -28,6 +30,11 @@ export function ProjectCard({ project, dri, em, pm, health }: ProjectCardProps) 
 
       <div className={`mb-2 ${healthMeta ? 'pr-5' : ''}`}>
         <h3 className="text-sm font-semibold leading-snug text-zinc-100">{project.name}</h3>
+        {showStatus && (
+          <div className="mt-1">
+            <ProjectStatusBadge status={project.status} />
+          </div>
+        )}
       </div>
 
       {project.description && (

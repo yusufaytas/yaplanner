@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getProjectCardPersonName, resolveCreatedPersonSubteamId, splitLeadershipPeople } from './people-directory';
+import { getProjectCardPersonName, resolveCreatedPersonSubteamId, splitLeadershipPeople } from './people';
 import type { Person } from './types';
 
 describe('people directory helpers', () => {

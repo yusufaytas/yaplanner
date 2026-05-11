@@ -3,10 +3,10 @@
 import { Fragment, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { getQuarterPersonCapacitySummary } from '@/lib/quarter-capacity';
+import { getQuarterPersonCapacitySummary, personTracksCapacity } from '@/lib/person-capacity';
+import { getCapacityPlanningData, updateQuarter, updateQuarterPerson } from '@/lib/quarters';
 import type { CapacityOverhead, OverheadItem } from '@/lib/types';
 
 function updateOverheadItem(items: OverheadItem[], itemId: string, value: number): OverheadItem[] {
@@ -41,43 +41,36 @@ export default function QuarterCapacityPlanningClient() {
   const [editingOverrideFor, setEditingOverrideFor] = useState<string | null>(null);
   const [overrideDrafts, setOverrideDrafts] = useState<Record<string, CapacityOverhead>>({});
 
-  const data = useLiveQuery(async () => {
-    const [quarter, people, quarterPeople] = await Promise.all([
-      db.quarters.get(quarterId),
-      db.people.orderBy('name').toArray(),
-      db.quarterPeople.where('quarterId').equals(quarterId).toArray(),
-    ]);
-    return { quarter, people, quarterPeople };
-  }, [quarterId]);
+  const data = useLiveQuery(() => getCapacityPlanningData(quarterId), [quarterId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
   if (!data.quarter) return <div className="text-sm text-zinc-400">Quarter not found.</div>;
 
   const { quarter, people, quarterPeople } = data;
-  const engineerPeople = people.filter((person) => person.role === 'Engineer');
+  const engineerPeople = people.filter((person) => personTracksCapacity(person.role));
   const quarterPersonByPersonId = new Map(quarterPeople.map((quarterPerson) => [quarterPerson.personId, quarterPerson]));
 
   async function saveQuarterOverhead(itemId: string, value: number) {
-    await db.quarters.update(quarter.id, {
+    await updateQuarter(quarter.id, {
       overhead: { items: updateOverheadItem(quarter.overhead.items, itemId, value) },
     });
   }
 
   async function saveQuarterPersonCapacity(quarterPersonId: string, value: number) {
-    await db.quarterPeople.update(quarterPersonId, { quarterCapacity: Math.max(0, Math.min(100, Math.round(value))) });
+    await updateQuarterPerson(quarterPersonId, { quarterCapacity: Math.max(0, Math.min(100, Math.round(value))) });
   }
 
   async function enableOverride(quarterPersonId: string) {
     const draft = cloneOverhead(quarter.overhead);
     setOverrideDrafts((current) => ({ ...current, [quarterPersonId]: draft }));
     setEditingOverrideFor(quarterPersonId);
-    await db.quarterPeople.update(quarterPersonId, { overheadOverride: draft });
+    await updateQuarterPerson(quarterPersonId, { overheadOverride: draft });
   }
 
   async function saveOverrideDraft(quarterPersonId: string) {
     const draft = overrideDrafts[quarterPersonId];
     if (!draft) return;
-    await db.quarterPeople.update(quarterPersonId, { overheadOverride: draft });
+    await updateQuarterPerson(quarterPersonId, { overheadOverride: draft });
     setEditingOverrideFor(null);
   }
 
@@ -88,14 +81,14 @@ export default function QuarterCapacityPlanningClient() {
       return next;
     });
     setEditingOverrideFor(null);
-    await db.quarterPeople.update(quarterPersonId, { overheadOverride: null });
+    await updateQuarterPerson(quarterPersonId, { overheadOverride: null });
   }
 
   async function addQuarterOverheadItem() {
     const label = newQuarterItemLabel.trim();
     if (!label) return;
     const value = Number(newQuarterItemValue);
-    await db.quarters.update(quarter.id, {
+    await updateQuarter(quarter.id, {
       overhead: {
         items: addOverheadItem(quarter.overhead.items, {
           id: uid(),
@@ -111,7 +104,7 @@ export default function QuarterCapacityPlanningClient() {
   }
 
   async function removeQuarterOverheadItem(itemId: string) {
-    await db.quarters.update(quarter.id, {
+    await updateQuarter(quarter.id, {
       overhead: { items: removeOverheadItem(quarter.overhead.items, itemId) },
     });
   }

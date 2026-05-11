@@ -1,4 +1,5 @@
-import type { ProjectStatus, Unknown, Risk } from './types';
+import { getQuarterPersonProjectSummary } from './person-capacity';
+import type { Allocation, Person, Project, ProjectStatus, Quarter, QuarterPerson, Unknown, Risk } from './types';
 
 export type ProjectHealth = 'blue' | 'green' | 'yellow' | 'red';
 
@@ -13,6 +14,7 @@ export function computeProjectHealth(
   status: ProjectStatus,
   unknowns: Pick<Unknown, 'resolved'>[],
   risks: Pick<Risk, 'mitigated' | 'likelihood' | 'impact'>[],
+  hasOverAllocatedPeople = false,
 ): ProjectHealth {
   if (status === 'Proposed') return 'blue';
 
@@ -27,28 +29,68 @@ export function computeProjectHealth(
   const hasMediumRisk = openRisks.some(
     (r) => r.likelihood === 'Medium' || r.impact === 'Medium',
   );
-  if (hasMediumRisk || openUnknowns.length > 0) return 'yellow';
+  if (hasMediumRisk || openUnknowns.length > 0 || hasOverAllocatedPeople) return 'yellow';
 
   return 'green';
 }
 
-export function buildProjectHealthMap(
-  projects: Array<{ id: string; status: ProjectStatus }>,
-  unknowns: Unknown[],
-  risks: Risk[],
-): Map<string, ProjectHealth> {
-  const unknownsByProject = new Map<string, Unknown[]>();
-  for (const unknown of unknowns) {
-    const entries = unknownsByProject.get(unknown.projectId) ?? [];
-    entries.push(unknown);
-    unknownsByProject.set(unknown.projectId, entries);
+export function getOverAllocatedProjectIds(params: {
+  quarter: Quarter;
+  people: Person[];
+  quarterPeople: QuarterPerson[];
+  allocations: Allocation[];
+}): Set<string> {
+  const { quarter, people, quarterPeople, allocations } = params;
+  const overAllocatedProjectIds = new Set<string>();
+
+  for (const person of people) {
+    const quarterPerson = quarterPeople.find(
+      (entry) => entry.personId === person.id && entry.quarterId === quarter.id,
+    );
+    const summary = getQuarterPersonProjectSummary(quarter, person, quarterPerson, allocations);
+    if (!summary.tracksCapacity || !summary.overAllocated) continue;
+
+    for (const allocation of allocations) {
+      if (
+        allocation.personId === person.id &&
+        allocation.quarterId === quarter.id &&
+        allocation.projectId &&
+        allocation.endDate === null &&
+        (allocation.role === 'Engineer' || allocation.role === 'DRI')
+      ) {
+        overAllocatedProjectIds.add(allocation.projectId);
+      }
+    }
   }
 
+  return overAllocatedProjectIds;
+}
+
+export function buildProjectHealthMap(
+  projects: Array<Pick<Project, 'id' | 'status'> & Partial<Pick<Project, 'unknowns' | 'risks'>>>,
+  unknowns?: Array<Unknown & { projectId?: string }>,
+  risks?: Array<Risk & { projectId?: string }>,
+  overAllocatedProjectIds?: Set<string>,
+): Map<string, ProjectHealth> {
+  const unknownsByProject = new Map<string, Unknown[]>();
   const risksByProject = new Map<string, Risk[]>();
-  for (const risk of risks) {
-    const entries = risksByProject.get(risk.projectId) ?? [];
-    entries.push(risk);
-    risksByProject.set(risk.projectId, entries);
+
+  if (unknowns) {
+    for (const unknown of unknowns) {
+      if (!unknown.projectId) continue;
+      const entries = unknownsByProject.get(unknown.projectId) ?? [];
+      entries.push(unknown);
+      unknownsByProject.set(unknown.projectId, entries);
+    }
+  }
+
+  if (risks) {
+    for (const risk of risks) {
+      if (!risk.projectId) continue;
+      const entries = risksByProject.get(risk.projectId) ?? [];
+      entries.push(risk);
+      risksByProject.set(risk.projectId, entries);
+    }
   }
 
   const healthByProject = new Map<string, ProjectHealth>();
@@ -57,8 +99,9 @@ export function buildProjectHealthMap(
       project.id,
       computeProjectHealth(
         project.status,
-        unknownsByProject.get(project.id) ?? [],
-        risksByProject.get(project.id) ?? [],
+        project.unknowns ?? unknownsByProject.get(project.id) ?? [],
+        project.risks ?? risksByProject.get(project.id) ?? [],
+        overAllocatedProjectIds?.has(project.id) ?? false,
       ),
     );
   }
@@ -89,7 +132,7 @@ export const projectHealthMeta: Record<ProjectHealth, {
   },
   yellow: {
     label: 'At risk',
-    description: 'There is at least one open unknown or medium-severity risk.',
+    description: 'There is at least one open unknown, medium-severity risk, or over-capacity delivery member.',
     dotBg: 'bg-amber-400',
     dotShadow: 'shadow-amber-400/40',
     pillClassName: 'bg-amber-500/20 text-amber-300',

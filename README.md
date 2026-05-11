@@ -11,9 +11,9 @@ All data stays in your browser via IndexedDB. No backend and no telemetry. Expor
 - **People, subteams, and projects** are global — they exist across quarters
 - **Quarters** are planning lenses: allocations, capacity, and warnings are all quarter-scoped
 - A project can span many quarters, with per-quarter estimated and allocated person-weeks tracked separately
-- Weekly percentage-based allocation per person per project
+- Percentage-based allocation per person per project, with start and end dates
 - Capacity planning with overhead items (PTO, meetings, oncall, etc.) applied at the quarter level, with per-person overrides
-- Project health signal (green / yellow / red) derived from open risks and unknowns
+- Project health signal (green / yellow / red) derived from open risks, unknowns, and over-capacity delivery members
 - Engineer availability filter — only engineers with remaining capacity appear in project assignment dropdowns
 - Export full data as JSON; import to restore or share
 - Optional Google Drive backup sync using a visible `Yaplanner` folder
@@ -72,7 +72,21 @@ availablePW  = quarterWeeks × effectivePct / 100
 
 Overhead items compound sequentially. A `pct` item reduces by percentage; a `weeks` item converts weeks-out-of-quarter to a fraction.
 
-Project allocation per engineer is derived from explicit `Allocation` records (weekly %) averaged across the quarter. If no allocations exist, remaining capacity is split evenly across assigned projects (with a 50% floor for DRIs).
+All allocation math uses **effective capacity**, not base capacity.
+
+That means:
+- `quarterPerson.quarterCapacity` sets the base for that quarter
+- quarter overhead or person overhead override reduces that to `effectivePct`
+- project allocation percentages are constrained against that effective capacity
+- if a person is over effective capacity, the UI shows them as over capacity and project health rises to at least yellow
+
+Project reserved person-weeks are computed from explicit `Allocation` rows:
+
+```text
+projectReservedPW = availablePW × (allocationPct / effectivePct)
+```
+
+If a person has `effectivePct = 40` and is allocated `10` to a project, that project is consuming 25% of their usable quarter capacity.
 
 ## Engineer assignment rules
 
@@ -80,6 +94,23 @@ An engineer only appears in the project assignment dropdown if:
 - They have a `QuarterPerson` record for the active quarter (added via the People tab)
 - They are not marked inactive
 - Their remaining capacity after existing project allocations is > 0
+
+## Planning rules
+
+- A project has exactly one owning subteam via `project.subteamId`.
+- A subteam is the current delivery snapshot: one `DRI` and zero or more `Engineer`s.
+- `EM`, `PM`, and `Stakeholder` are part of the delivery team, but they are not part of the subteam.
+- Delivery-team history is stored in `allocations`. There is no separate project-role or subteam-member table.
+- If a delivery person is added to one project in a subteam, they are materialized across every sibling project in that same subteam.
+- Sibling-project propagation only applies to delivery roles: `DRI` and `Engineer`.
+- `EM`, `PM`, and `Stakeholder` stay project-specific.
+- Every project must have a `DRI`.
+- `percentage` on `Allocation` is project share of the person’s effective quarter capacity.
+- `startDate` / `endDate` on `Allocation` preserve history.
+- Removing someone from a project normally ends their active allocation rows instead of deleting them.
+- Short-lived mistaken assignments are not preserved as history: if an active allocation started less than 7 days ago, removing that person deletes the allocation instead of end-dating it.
+- Completed projects show all involved people directly in the team list, including ended allocations.
+- Project links, unknowns, and risks are embedded on the `Project` record, not stored as separate tables.
 
 ## Import / Export / Drive Sync
 
@@ -107,10 +138,23 @@ npm run lint       # lint
 
 ## Data model
 
-Two-layer model:
+Current tables:
 
-**Global** (cross-quarter): `people`, `subteams`, `projects`, `projectLinks`, `projectUpdates`, `projectStakeholders`
+**Global**
+- `people`
+- `subteams`
+- `projects`
 
-**Quarter-scoped**: `quarters`, `quarterProjects`, `quarterPeople`, `projectRoles`, `allocations`, `availabilityRecords`, `headcountEvents`, `unknowns`, `risks`, `decisionLogEntries`, `snapshots`
+**Quarter-scoped**
+- `quarters`
+- `quarterProjects`
+- `quarterPeople`
+- `allocations`
+
+Key relationships:
+- `Project.subteamId` points to the owning subteam
+- `QuarterProject` stores quarter-specific planning data for a project
+- `QuarterPerson` stores quarter-specific capacity and overhead overrides for a person
+- `Allocation` stores both current and historical project membership, role, and capacity share over time
 
 All data lives in IndexedDB in the browser. Nothing is sent to any server.

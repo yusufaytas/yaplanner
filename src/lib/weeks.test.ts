@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getQuarterWeeks } from './weeks';
+import { getQuarterDurationWeeks, getQuarterWeeks } from './weeks';
 
 /**
  * Unit tests for getQuarterWeeks
@@ -62,5 +62,16 @@ describe('getQuarterWeeks', () => {
     const weeks = getQuarterWeeks('2026-07-05', '2026-07-05');
     expect(weeks[0]).toBe('2026-06-29');
     expect(weeks).toHaveLength(1);
+  });
+});
+
+describe('getQuarterDurationWeeks', () => {
+  it('returns 13 for a 91-day standard quarter even when it spans 14 Monday buckets', () => {
+    expect(getQuarterDurationWeeks('2026-04-01', '2026-06-30')).toBe(13);
+  });
+
+  it('returns fractional weeks for non-standard date ranges', () => {
+    expect(getQuarterDurationWeeks('2026-07-01', '2026-07-14')).toBe(2);
+    expect(getQuarterDurationWeeks('2026-07-01', '2026-07-07')).toBe(1);
   });
 });

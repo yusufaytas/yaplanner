@@ -2,843 +2,911 @@
 
 import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useState } from 'react';
-import { db } from '@/lib/db';
-import { InlineEditNumber, InlineEditText, InlineEditSelect } from '@/components/ui/InlineEdit';
-import type { ProjectStatus, ProjectRoleType, RiskLikelihood, RiskImpact } from '@/lib/types';
+import { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
+import { InlineEditText } from '@/components/ui/InlineEdit';
 import {
-  getDefaultProjectRoleType,
-  getAssignablePeopleForProjectRole,
-  getEditableProjectRoleOptions,
-  getPersonProjectCapacityShare,
-  planProjectAllocationTemplate,
-  getProjectRoleOptions,
-  personNeedsProjectCapacity,
-  planQuarterProjectAllocation,
-  planAddProjectRole, planProjectRolePersonChange, planProjectRoleTypeChange, type ProjectTeamMutationPlan,
-} from '@/lib/project-team';
-import { getAssignableEngineers } from '@/lib/quarter-capacity';
+  addProjectLink as createProjectLink,
+  addProjectMember,
+  addProjectRisk as createProjectRisk,
+  addProjectUnknown as createProjectUnknown,
+  deleteProjectCascade,
+  getProjectMemberAllocationMax,
+  getProjectPageData,
+  removeProjectLink as deleteProjectLink,
+  removeProjectMember,
+  toggleProjectRiskMitigated as setProjectRiskMitigated,
+  toggleProjectUnknownResolved as setProjectUnknownResolved,
+  updateProjectDescription,
+  updateProjectName,
+  updateProjectStatus,
+  updateProjectTags,
+} from '@/lib/projects';
 import {
-  buildProjectQuarterCapacitySummaries,
-  getActiveProjectAllocations,
-  getActiveProjectRoles,
-  getAssignedProjectQuarters,
-  getRemainingProjectPersonCapacity,
-  sortProjectRoles,
-} from '@/lib/project-detail';
-import { planEnsureProjectInQuarter } from '@/lib/quarter-projects';
-import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
-import { computeProjectHealth, projectHealthMeta } from '@/lib/project-health';
-import { formatProjectTags, getProjectTags, parseProjectTagsInput } from '@/lib/project-tags';
+  getAssignableEngineers,
+  getPersonRemainingAllocationPct,
+  getQuarterPersonProjectSummary,
+  personTracksCapacity,
+} from '@/lib/person-capacity';
+import { getActiveQuarter } from '@/lib/quarters';
+import { projectHealthMeta, buildProjectHealthMap, getOverAllocatedProjectIds } from '@/lib/project-health';
+import { getProjectTags } from '@/lib/project-tags';
+import { Badge } from '@/components/ui/Badge';
+import type { ProjectStatus, QuarterPerson, QuarterStatus, RiskImpact, RiskLikelihood, Role } from '@/lib/types';
 
-const STATUS_OPTIONS: { value: ProjectStatus; label: string }[] = [
-  { value: 'Proposed',  label: 'Proposed'  },
-  { value: 'Active',    label: 'Active'    },
-  { value: 'On Hold',   label: 'On Hold'   },
-  { value: 'Complete',  label: 'Complete'  },
+const STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string }> = [
+  { value: 'Proposed', label: 'Proposed' },
+  { value: 'Active', label: 'Active' },
+  { value: 'On Hold', label: 'On Hold' },
+  { value: 'Complete', label: 'Complete' },
   { value: 'Cancelled', label: 'Cancelled' },
 ];
 
-const ROLE_OPTIONS: { value: ProjectRoleType; label: string }[] = [
-  { value: 'DRI',      label: 'DRI'      },
+const ALL_ROLE_OPTIONS: Array<{ value: Role; label: string }> = [
+  { value: 'DRI', label: 'DRI' },
   { value: 'Engineer', label: 'Engineer' },
-  { value: 'EM',       label: 'EM'       },
-  { value: 'PM',       label: 'PM'       },
+  { value: 'EM', label: 'EM' },
+  { value: 'PM', label: 'PM' },
+  { value: 'Stakeholder', label: 'Stakeholder' },
 ];
 
-const LIKELIHOOD_OPTIONS: { value: RiskLikelihood; label: string }[] = [
-  { value: 'Low', label: 'Low' }, { value: 'Medium', label: 'Medium' }, { value: 'High', label: 'High' },
+const RISK_LEVEL_OPTIONS: Array<{ value: RiskLikelihood | RiskImpact; label: string }> = [
+  { value: 'Low', label: 'Low' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'High', label: 'High' },
 ];
-const IMPACT_OPTIONS: { value: RiskImpact; label: string }[] = [
-  { value: 'Low', label: 'Low' }, { value: 'Medium', label: 'Medium' }, { value: 'High', label: 'High' },
-];
 
-function uid() { return crypto.randomUUID(); }
-export default function ProjectPageClient() {
-  const { projectId } = useParams<{ projectId: string }>();
+function TagsEditor({ tags, onSave }: { tags: string[]; onSave: (val: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const ref = useRef<HTMLInputElement>(null);
 
-  // new-item form state
-  const [addingRole, setAddingRole]       = useState(false);
-  const [newRoleType, setNewRoleType]     = useState<ProjectRoleType>('DRI');
-  const [newRolePersonId, setNewRolePersonId] = useState('');
-  const [newRoleCapacity, setNewRoleCapacity] = useState(100);
-  const [addingStakeholder, setAddingStakeholder] = useState(false);
-  const [newStakeholderPersonId, setNewStakeholderPersonId] = useState('');
-
-  const [addingLink, setAddingLink]       = useState(false);
-  const [newLinkLabel, setNewLinkLabel]   = useState('');
-  const [newLinkUrl, setNewLinkUrl]       = useState('');
-
-  const [addingUnknown, setAddingUnknown] = useState(false);
-  const [newUnknownTitle, setNewUnknownTitle] = useState('');
-  const [newUnknownDesc, setNewUnknownDesc]   = useState('');
-
-  const [addingRisk, setAddingRisk]       = useState(false);
-  const [newRiskTitle, setNewRiskTitle]   = useState('');
-  const [newRiskLikelihood, setNewRiskLikelihood] = useState<RiskLikelihood>('Medium');
-  const [newRiskImpact, setNewRiskImpact] = useState<RiskImpact>('Medium');
-  const [newRiskNote, setNewRiskNote]     = useState('');
-
-  const data = useLiveQuery(async () => {
-    const [project, people, subteams, allQuarters, allProjectRoles, projectStakeholders, quarterPeople, projectLinks, unknowns, risks, allocations, allQuarterProjects] =
-      await Promise.all([
-        db.projects.get(projectId),
-        db.people.orderBy('name').toArray(),
-        db.subteams.toArray(),
-        listResolvedQuarters(),
-        db.projectRoles.toArray(),
-        db.projectStakeholders.where('projectId').equals(projectId).toArray(),
-        db.quarterPeople.toArray(),
-        db.projectLinks.where('projectId').equals(projectId).toArray(),
-        db.unknowns.where('projectId').equals(projectId).toArray(),
-        db.risks.where('projectId').equals(projectId).toArray(),
-        db.allocations.toArray(),
-        db.quarterProjects.where('projectId').equals(projectId).toArray(),
-      ]);
-    return { project, people, subteams, allQuarters, allProjectRoles, projectStakeholders, quarterPeople, projectLinks, unknowns, risks, allocations, allQuarterProjects };
-  }, [projectId]);
-
-  if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
-  if (!data.project) return <div className="text-sm text-zinc-400">Project not found.</div>;
-
-  const { project, people, subteams, allQuarters, allProjectRoles, projectStakeholders, quarterPeople, projectLinks, unknowns, risks, allocations, allQuarterProjects } = data;
-  const activeQuarter = getActiveQuarter(allQuarters);
-  const activeQuarterId = activeQuarter?.id ?? null;
-  const { activeProjectRoles, projectRoles } = getActiveProjectRoles(projectId, activeQuarterId, allProjectRoles);
-  const activeAllocations = getActiveProjectAllocations(activeQuarterId, allocations);
-  const assignedQuarters = getAssignedProjectQuarters(allQuarters, allQuarterProjects);
-  const quarterCapacitySummaries = buildProjectQuarterCapacitySummaries({
-    projectId,
-    assignedQuarters,
-    allQuarterProjects,
-    allProjectRoles,
-    allocations,
-    people,
-    quarterPeople,
-  });
-
-  const openUnknowns = unknowns.filter((u) => !u.resolved).length;
-  const openRisks    = risks.filter((r) => !r.mitigated).length;
-  const health = computeProjectHealth(project.status, unknowns, risks);
-  const healthMeta = projectHealthMeta[health];
-
-  const sortedRoles = sortProjectRoles(projectRoles);
-  const currentDri = projectRoles.find((role) => role.role === 'DRI');
-  const projectSubteam = project.owningSubteamId
-    ? subteams.find((subteam) => subteam.id === project.owningSubteamId) ?? null
-    : null;
-  const addRoleOptions = ROLE_OPTIONS.filter((option) =>
-    getProjectRoleOptions(projectRoles).includes(option.value),
-  );
-  const assignableEngineers = activeQuarter
-    ? new Set(getAssignableEngineers(people, quarterPeople, activeQuarter, activeProjectRoles, activeAllocations).map((p) => p.id))
-    : null;
-
-  const addablePeople = getAssignablePeopleForProjectRole(people, projectRoles, newRoleType).filter((p) => {
-    if (newRoleType !== 'Engineer') return true;
-    if (!assignableEngineers) return true;
-    return assignableEngineers.has(p.id);
-  });
-
-  function getRemainingCapacity(personId: string): number {
-    return getRemainingProjectPersonCapacity(personId, people, activeProjectRoles, activeAllocations);
+  function start() {
+    setDraft(tags.join(', '));
+    setEditing(true);
   }
 
-  // ── project field saves ──────────────────────────────────────────────────
-  const saveProject = (patch: Partial<typeof project>) =>
-    db.projects.update(projectId, patch);
-
-  function buildProjectTeamContext() {
-    return { activeQuarterId, people, project, projectRoles, quarterPeople, subteams };
+  function commit() {
+    onSave(draft);
+    setEditing(false);
   }
 
-  async function applyProjectTeamMutationPlan(plan: ProjectTeamMutationPlan) {
-    if (plan.roleToCreate) {
-      await db.projectRoles.add(plan.roleToCreate);
-    }
-    if (plan.roleUpdate) {
-      await db.projectRoles.update(plan.roleUpdate.roleId, plan.roleUpdate.patch);
-    }
-    if (plan.subteamToCreate) {
-      await db.subteams.add(plan.subteamToCreate);
-    }
-    if (plan.subteamToUpdate) {
-      await db.subteams.update(plan.subteamToUpdate.id, plan.subteamToUpdate.patch);
-    }
-    if (plan.projectPatch) {
-      await db.projects.update(projectId, plan.projectPatch);
-    }
-    for (const update of plan.peopleUpdates) {
-      await db.people.update(update.personId, { subteamId: update.subteamId });
-    }
-    if (plan.quarterPeopleToCreate.length > 0) {
-      await db.quarterPeople.bulkAdd(plan.quarterPeopleToCreate);
-    }
-    for (const update of plan.quarterPeopleUpdates) {
-      await db.quarterPeople.update(update.quarterPersonId, { subteamId: update.subteamId });
-    }
-  }
+  useEffect(() => {
+    if (editing) { ref.current?.focus(); ref.current?.select(); }
+  }, [editing]);
 
-  async function ensureLeadershipRoleAppearsInActiveQuarter(roleType: ProjectRoleType) {
-    if (!activeQuarter) return;
-    const quarterProjects = await db.quarterProjects.where('quarterId').equals(activeQuarter.id).toArray();
-    const quarterProjectToCreate = planEnsureProjectInQuarter(activeQuarter, quarterProjects, project, roleType, uid);
-    if (quarterProjectToCreate) {
-      await db.quarterProjects.add(quarterProjectToCreate);
-    }
-  }
-
-  function resetRoleForm(roleType: ProjectRoleType = getDefaultProjectRoleType(projectRoles)) {
-    setNewRoleType(roleType);
-    setNewRolePersonId('');
-    setNewRoleCapacity(100);
-  }
-
-  function startAddingRole() {
-    resetRoleForm();
-    setAddingRole(true);
-  }
-
-  // ── role CRUD ────────────────────────────────────────────────────────────
-  async function addRole() {
-    if (!newRolePersonId) return;
-    const plan = planAddProjectRole(buildProjectTeamContext(), newRoleType, newRolePersonId, {
-      createId: uid,
-      nowIso: () => new Date().toISOString(),
-    });
-    if (typeof plan === 'string') return;
-    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople, db.quarterProjects], async () => {
-      await applyProjectTeamMutationPlan(plan);
-      await ensureLeadershipRoleAppearsInActiveQuarter(newRoleType);
-    });
-    // For Engineers, immediately write the chosen capacity allocation
-    if (newRoleType === 'Engineer') {
-      await saveRoleCapacity(newRolePersonId, newRoleCapacity);
-    }
-    setAddingRole(false);
-    resetRoleForm();
-  }
-
-  async function saveRoleType(roleId: string, nextRole: ProjectRoleType) {
-    const plan = planProjectRoleTypeChange(buildProjectTeamContext(), roleId, nextRole, {
-      createId: uid,
-      nowIso: () => new Date().toISOString(),
-    });
-    if (typeof plan === 'string') return;
-    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople, db.quarterProjects], async () => {
-      await applyProjectTeamMutationPlan(plan);
-      await ensureLeadershipRoleAppearsInActiveQuarter(nextRole);
-    });
-  }
-
-  async function saveRolePerson(roleId: string, personId: string) {
-    const existingRole = projectRoles.find((role) => role.id === roleId);
-    const plan = planProjectRolePersonChange(buildProjectTeamContext(), roleId, personId, {
-      createId: uid,
-      nowIso: () => new Date().toISOString(),
-    });
-    if (typeof plan === 'string') return;
-    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople, db.quarterProjects], async () => {
-      await applyProjectTeamMutationPlan(plan);
-      if (existingRole) {
-        await ensureLeadershipRoleAppearsInActiveQuarter(existingRole.role);
-      }
-    });
-  }
-
-  async function saveRoleCapacity(personId: string, percentage: number) {
-    const plan = activeQuarter
-      ? planQuarterProjectAllocation(
-        activeQuarter,
-        personId,
-        projectId,
-        percentage,
-        activeProjectRoles,
-        activeAllocations,
-        uid,
-      )
-      : planProjectAllocationTemplate(
-        personId,
-        projectId,
-        percentage,
-        activeProjectRoles,
-        activeAllocations,
-        uid,
-      );
-    await db.transaction('rw', db.allocations, async () => {
-      if (plan.allocationsToDelete.length > 0) {
-        await db.allocations.bulkDelete(plan.allocationsToDelete);
-      }
-      if (plan.allocationsToUpsert.length > 0) {
-        await db.allocations.bulkPut(plan.allocationsToUpsert);
-      }
-    });
-  }
-
-  async function addStakeholder() {
-    if (!newStakeholderPersonId) return;
-    await db.projectStakeholders.add({
-      id: uid(),
-      quarterId: activeQuarterId ?? '',
-      projectId,
-      personId: newStakeholderPersonId,
-    });
-    setAddingStakeholder(false);
-    setNewStakeholderPersonId('');
-  }
-
-  // ── link CRUD ────────────────────────────────────────────────────────────
-  async function addLink() {
-    if (!newLinkLabel.trim() || !newLinkUrl.trim()) return;
-    await db.projectLinks.add({ id: uid(), projectId, label: newLinkLabel.trim(), url: newLinkUrl.trim() });
-    setAddingLink(false); setNewLinkLabel(''); setNewLinkUrl('');
-  }
-
-  // ── unknown CRUD ─────────────────────────────────────────────────────────
-  async function addUnknown() {
-    if (!newUnknownTitle.trim()) return;
-    await db.unknowns.add({
-      id: uid(), projectId, quarterId: activeQuarterId ?? '',
-      title: newUnknownTitle.trim(), description: newUnknownDesc.trim(),
-      resolved: false, resolvedAt: null, createdAt: new Date().toISOString(),
-    });
-    setAddingUnknown(false); setNewUnknownTitle(''); setNewUnknownDesc('');
-  }
-
-  // ── risk CRUD ────────────────────────────────────────────────────────────
-  async function addRisk() {
-    if (!newRiskTitle.trim()) return;
-    await db.risks.add({
-      id: uid(), projectId, quarterId: activeQuarterId ?? '',
-      title: newRiskTitle.trim(), likelihood: newRiskLikelihood, impact: newRiskImpact,
-      mitigationNote: newRiskNote.trim(), mitigated: false, mitigatedAt: null,
-      createdAt: new Date().toISOString(),
-    });
-    setAddingRisk(false); setNewRiskTitle(''); setNewRiskNote('');
+  if (editing) {
+    return (
+      <input
+        ref={ref}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        placeholder="platform, infra, …"
+        className="w-full rounded border border-sky-400/40 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
+      />
+    );
   }
 
   return (
-    <div className="space-y-8">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={start}
+      onKeyDown={(e) => e.key === 'Enter' && start()}
+      title="Click to edit tags"
+      className="flex flex-wrap gap-1.5 rounded px-0.5 -mx-0.5 cursor-text hover:bg-white/5 focus:outline-none focus:ring-1 focus:ring-sky-400/40 transition-colors min-h-[24px] items-center"
+    >
+      {tags.length > 0
+        ? tags.map((tag) => (
+            <span key={tag} className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-medium text-zinc-400">
+              #{tag}
+            </span>
+          ))
+        : <span className="text-xs text-zinc-600 italic">+ add tags</span>
+      }
+    </div>
+  );
+}
 
-      {/* ── Header ── */}
-      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
+export default function ProjectPageClient() {
+  const { projectId } = useParams<{ projectId: string }>();
+  const [addingMember, setAddingMember] = useState(false);
+  const [newMemberRole, setNewMemberRole] = useState<Role>('Engineer');
+  const [newMemberPersonId, setNewMemberPersonId] = useState('');
+  const [newMemberPercentage, setNewMemberPercentage] = useState<number>(100);
+  const [showHistory, setShowHistory] = useState(false);
+  const [addingLink, setAddingLink] = useState(false);
+  const [newLinkLabel, setNewLinkLabel] = useState('');
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+  const [addingUnknown, setAddingUnknown] = useState(false);
+  const [newUnknownTitle, setNewUnknownTitle] = useState('');
+  const [newUnknownDescription, setNewUnknownDescription] = useState('');
+  const [addingRisk, setAddingRisk] = useState(false);
+  const [newRiskTitle, setNewRiskTitle] = useState('');
+  const [newRiskMitigation, setNewRiskMitigation] = useState('');
+  const [newRiskLikelihood, setNewRiskLikelihood] = useState<RiskLikelihood>('Medium');
+  const [newRiskImpact, setNewRiskImpact] = useState<RiskImpact>('Medium');
+
+  const data = useLiveQuery(async () => {
+    return getProjectPageData(projectId);
+  }, [projectId]);
+
+  const project = data?.project ?? null;
+  const projects = data?.projects ?? [];
+  const people = data?.people ?? [];
+  const subteams = data?.subteams ?? [];
+  const quarters = data?.quarters ?? [];
+  const allocations = data?.allocations ?? [];
+  const quarterPeople = data?.quarterPeople ?? [];
+  const quarterProjects = data?.quarterProjects ?? [];
+  const activeQuarter = getActiveQuarter(quarters);
+  const peopleById = new Map(people.map((person) => [person.id, person]));
+  const projectSubteam = project ? (subteams.find((subteam) => subteam.id === project.subteamId) ?? null) : null;
+  const projectAllocations = project ? allocations.filter((allocation) => allocation.projectId === project.id) : [];
+
+  const currentAllocations = projectAllocations.filter((allocation) => allocation.endDate === null);
+  const historicalAllocations = projectAllocations.filter((allocation) => allocation.endDate !== null);
+  const historicalProjectRoles = historicalAllocations.filter((allocation) => allocation.role === 'EM' || allocation.role === 'PM' || allocation.role === 'Stakeholder');
+
+  // People already on the project (current allocations)
+  const currentMemberPersonIds = new Set(currentAllocations.map((a) => a.personId));
+
+  if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
+  if (!project) return <div className="text-sm text-zinc-400">Project not found.</div>;
+  const resolvedProject = project;
+  const showCompletedProjectHistoryInline = resolvedProject.status === 'Complete';
+  const visibleTeamAllocations = showCompletedProjectHistoryInline ? projectAllocations : currentAllocations;
+  const overAllocatedProjectIds = activeQuarter
+    ? getOverAllocatedProjectIds({ quarter: activeQuarter, people, quarterPeople, allocations })
+    : undefined;
+  const healthMap = buildProjectHealthMap([resolvedProject], undefined, undefined, overAllocatedProjectIds);
+  const health = healthMap.get(resolvedProject.id);
+  const healthMeta = health ? projectHealthMeta[health] : null;
+  const tags = getProjectTags(resolvedProject);
+  const associatedQuarters = quarterProjects
+    .map((quarterProject) => {
+      const quarter = quarters.find((entry) => entry.id === quarterProject.quarterId);
+      return quarter ? { quarter, quarterProject } : null;
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((a, b) => a.quarter.startDate.localeCompare(b.quarter.startDate));
+
+  // Engineers/DRIs with actual remaining capacity in the active quarter
+  const assignableEngineerIds = activeQuarter
+    ? new Set(getAssignableEngineers(people, quarterPeople, activeQuarter, allocations).map((p) => p.id))
+    : new Set(people.filter((p) => {
+        if (!personTracksCapacity(p.role)) return false;
+        const totalAllocated = allocations.filter((a) => a.personId === p.id && a.endDate === null && a.percentage > 0).reduce((sum, a) => sum + a.percentage, 0);
+        return totalAllocated < p.defaultCapacity;
+      }).map((p) => p.id));
+
+  // Role-aware addable people list
+  const addableForRole = (role: Role) => people.filter((person) => {
+    if (currentMemberPersonIds.has(person.id)) return false;
+    if (role === 'Engineer' || role === 'DRI') {
+      return assignableEngineerIds.has(person.id);
+    }
+    return person.role === role;
+  });
+
+  // Helper: get remaining capacity % for a person.
+  // Uses the active quarter if available; falls back to defaultCapacity minus explicit allocations.
+  function getPersonRemainingPct(personId: string): number | null {
+    const person = peopleById.get(personId);
+    if (!person || !personTracksCapacity(person.role)) return null;
+
+    if (activeQuarter) {
+      const qp = quarterPeople.find((e) => e.personId === personId && e.quarterId === activeQuarter.id) as QuarterPerson | undefined;
+      return getPersonRemainingAllocationPct({
+        person,
+        quarterPerson: qp,
+        quarterId: activeQuarter.id,
+        allocations,
+      });
+    }
+
+    // No active quarter — subtract explicit active allocations from defaultCapacity
+    const activePersonAllocs = allocations.filter((a) => a.personId === personId && a.endDate === null && a.percentage > 0);
+    const totalAllocated = activePersonAllocs.reduce((sum, a) => sum + a.percentage, 0);
+    return Math.max(0, person.defaultCapacity - totalAllocated);
+  }
+
+  function getCapacitySummary(personId: string) {
+    if (!activeQuarter) return null;
+    const person = peopleById.get(personId);
+    if (!person || !personTracksCapacity(person.role)) return null;
+    const qp = quarterPeople.find((entry) => entry.personId === personId && entry.quarterId === activeQuarter.id) as QuarterPerson | undefined;
+    return getQuarterPersonProjectSummary(activeQuarter, person, qp, allocations);
+  }
+
+  async function saveProjectStatus(status: ProjectStatus) {
+    await updateProjectStatus(resolvedProject.id, status);
+  }
+
+  async function addMember() {
+    if (!newMemberPersonId) return;
+    await addProjectMember({
+      activeQuarter: activeQuarter ?? null,
+      allocations,
+      personId: newMemberPersonId,
+      people,
+      percentage: newMemberPercentage,
+      project: resolvedProject,
+      projects,
+      quarterPeople,
+      role: newMemberRole,
+    });
+
+    setNewMemberPersonId('');
+    setNewMemberPercentage(100);
+    setAddingMember(false);
+  }
+
+  async function removeMember(personId: string, role: Role) {
+    await removeProjectMember({
+      allocations,
+      currentProjectAllocations: currentAllocations,
+      personId,
+      project: resolvedProject,
+      projects,
+      role,
+    });
+  }
+
+  async function addProjectLink() {
+    if (!newLinkLabel.trim() || !newLinkUrl.trim()) return;
+    await createProjectLink(resolvedProject, newLinkLabel, newLinkUrl);
+    setNewLinkLabel('');
+    setNewLinkUrl('');
+    setAddingLink(false);
+  }
+
+  async function removeProjectLink(linkId: string) {
+    await deleteProjectLink(resolvedProject, linkId);
+  }
+
+  async function addProjectUnknown() {
+    if (!activeQuarter || !newUnknownTitle.trim()) return;
+    await createProjectUnknown({
+      activeQuarter,
+      description: newUnknownDescription,
+      project: resolvedProject,
+      title: newUnknownTitle,
+    });
+    setNewUnknownTitle('');
+    setNewUnknownDescription('');
+    setAddingUnknown(false);
+  }
+
+  async function toggleUnknownResolved(unknownId: string, resolved: boolean) {
+    await setProjectUnknownResolved(resolvedProject, unknownId, resolved);
+  }
+
+  async function addProjectRisk() {
+    if (!activeQuarter || !newRiskTitle.trim()) return;
+    await createProjectRisk({
+      activeQuarter,
+      impact: newRiskImpact,
+      likelihood: newRiskLikelihood,
+      mitigationNote: newRiskMitigation,
+      project: resolvedProject,
+      title: newRiskTitle,
+    });
+    setNewRiskTitle('');
+    setNewRiskMitigation('');
+    setNewRiskLikelihood('Medium');
+    setNewRiskImpact('Medium');
+    setAddingRisk(false);
+  }
+
+  async function toggleRiskMitigated(riskId: string, mitigated: boolean) {
+    await setProjectRiskMitigated(resolvedProject, riskId, mitigated);
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Back nav */}
+      <Link href="/projects" className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+        All projects
+      </Link>
+
+      {/* ── Header card ─────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-5">
         <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 mb-1 flex-wrap">
-              <h1 className="text-2xl font-bold text-zinc-50">
-                <InlineEditText
-                  value={project.name}
-                  onSave={(v) => saveProject({ name: v })}
-                  className="text-2xl font-bold"
-                />
-              </h1>
-              <InlineEditSelect
-                value={project.status}
-                options={STATUS_OPTIONS}
-                onSave={(v) => saveProject({ status: v })}
-              />
+          <div className="min-w-0 flex-1 space-y-3">
+            <InlineEditText
+              value={resolvedProject.name}
+              onSave={(value) => updateProjectName(resolvedProject.id, value)}
+              className="text-2xl font-bold text-zinc-50"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              {healthMeta && (
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${healthMeta.pillClassName}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${healthMeta.dotBg}`} />
+                  {healthMeta.label}
+                </span>
+              )}
+              {projectSubteam && (
+                <span className="text-xs text-zinc-500">{projectSubteam.name}</span>
+              )}
             </div>
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
-              <span>{projectSubteam?.name ?? 'No subteam yet'}</span>
-            </div>
+
+            {/* Tags — click to edit as comma-separated text */}
+            <TagsEditor
+              tags={tags}
+              onSave={(val) => updateProjectTags(resolvedProject.id, val)}
+            />
           </div>
-          <div className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${healthMeta.pillClassName}`}>
-            {`● ${healthMeta.label}`}
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={resolvedProject.status}
+              onChange={(e) => saveProjectStatus(e.target.value as ProjectStatus)}
+              className="h-7 rounded-lg border border-white/10 bg-zinc-900 px-2 py-0 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => deleteProjectCascade(resolvedProject.id, resolvedProject.subteamId)}
+              className="h-7 rounded-lg border border-rose-500/20 bg-rose-500/10 px-2 text-xs text-rose-300 hover:bg-rose-500/20 transition-colors"
+            >
+              Delete
+            </button>
           </div>
         </div>
 
-        {/* Description */}
-        <div>
-          <p className="mb-1 text-xs uppercase tracking-[0.2em] text-zinc-500">Description</p>
+        <div className="border-t border-white/5 pt-4">
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-[0.15em] text-zinc-600">Description</p>
           <InlineEditText
-            value={project.description}
-            onSave={(v) => saveProject({ description: v })}
+            value={resolvedProject.description}
+            onSave={(value) => updateProjectDescription(resolvedProject.id, value)}
             multiline
             placeholder="Add a description…"
-            className="text-sm text-zinc-300 leading-relaxed w-full"
-          />
-        </div>
-
-        <div>
-          <p className="mb-1 text-xs uppercase tracking-[0.2em] text-zinc-500">Tags</p>
-          <InlineEditText
-            value={formatProjectTags(getProjectTags(project))}
-            onSave={(value) => saveProject({ tags: parseProjectTagsInput(value) })}
-            placeholder="Add tags, comma-separated…"
-            emptyLabel="No tags"
-            className="text-sm text-zinc-300"
+            className="text-sm text-zinc-300 leading-relaxed"
           />
         </div>
       </div>
 
-      {/* ── Quarter Planning ── */}
+      {/* ── Team section ─────────────────────────────────────────── */}
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-zinc-200">Quarter planning</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-200">Team</h2>
+          <button
+            onClick={() => { setAddingMember((v) => !v); setNewMemberPersonId(''); }}
+            className="text-xs text-sky-400 hover:text-sky-200 transition-colors"
+          >
+            {addingMember ? 'Cancel' : '+ Add person'}
+          </button>
+        </div>
 
-        {assignedQuarters.length === 0 && (
-          <p className="text-sm text-zinc-600 italic">This project has not been added to any quarter yet.</p>
+        {/* Add-member form */}
+        {addingMember && (
+          <div className="flex flex-wrap items-end gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] text-zinc-500">Role</label>
+              <select
+                value={newMemberRole}
+                onChange={(e) => {
+                  setNewMemberRole(e.target.value as Role);
+                  setNewMemberPersonId('');
+                  setNewMemberPercentage(100);
+                }}
+                className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+              >
+                {ALL_ROLE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1 min-w-[180px]">
+              <label className="text-[11px] text-zinc-500">Person</label>
+              <select
+                value={newMemberPersonId}
+                onChange={(e) => {
+                  const personId = e.target.value;
+                  setNewMemberPersonId(personId);
+                  if (personId && (newMemberRole === 'Engineer' || newMemberRole === 'DRI')) {
+                    const remaining = getPersonRemainingPct(personId);
+                    setNewMemberPercentage(remaining !== null ? Math.max(1, remaining) : 100);
+                  }
+                }}
+                className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+              >
+                <option value="">Select person…</option>
+                {addableForRole(newMemberRole).map((person) => {
+                  const remaining = personTracksCapacity(person.role) ? getPersonRemainingPct(person.id) : null;
+                  const capLabel = remaining !== null ? ` · ${remaining}% free` : '';
+                  return (
+                    <option key={person.id} value={person.id}>
+                      {person.name}{capLabel}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+            {(newMemberRole === 'Engineer' || newMemberRole === 'DRI') && (() => {
+              const selectedPerson = peopleById.get(newMemberPersonId);
+              const maxPct = selectedPerson && activeQuarter
+                ? Math.max(1, getProjectMemberAllocationMax({
+                  allocations,
+                  person: selectedPerson,
+                  projectId: resolvedProject.id,
+                  quarterId: activeQuarter.id,
+                  quarterPeople,
+                }))
+                : newMemberPersonId ? Math.max(1, getPersonRemainingPct(newMemberPersonId) ?? 100) : 100;
+              return (
+                <div className="flex flex-col gap-1 w-20">
+                  <label className="text-[11px] text-zinc-500">% <span className="text-zinc-600">(max {maxPct})</span></label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={maxPct}
+                    value={newMemberPercentage}
+                    onChange={(e) => setNewMemberPercentage(Math.min(maxPct, Math.max(1, Number(e.target.value))))}
+                    className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+                  />
+                </div>
+              );
+            })()}
+            <button
+              onClick={addMember}
+              disabled={!newMemberPersonId}
+              className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Add
+            </button>
+          </div>
         )}
 
-        {assignedQuarters.length > 0 && (
-          <div className="space-y-3">
-            {quarterCapacitySummaries.map(({ quarter, quarterProject, summary }) => {
-              const isActive = quarter.status === 'active';
-              const remaining = summary.remainingPersonWeeks;
-              const overBudget = remaining !== null && remaining < 0;
+        {/* Current roster */}
+        {visibleTeamAllocations.length === 0 ? (
+          <p className="text-sm text-zinc-500">No team members yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {visibleTeamAllocations.map((alloc) => {
+              const person = peopleById.get(alloc.personId);
+              if (!person) return null;
+              const isHistoricalAllocation = alloc.endDate !== null;
+              const cap = !isHistoricalAllocation && (alloc.role === 'Engineer' || alloc.role === 'DRI') ? getCapacitySummary(person.id) : null;
+              const initials = person.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
               return (
-                <div
-                  key={quarter.id}
-                  className={`rounded-lg border p-4 text-sm ${isActive ? 'border-sky-400/30 bg-sky-400/5' : 'border-white/5 bg-white/[0.02]'}`}
-                >
-                  <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-zinc-200">{quarter.name}</span>
-                      {isActive && (
-                        <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-xs text-sky-300">active</span>
-                      )}
-                      {quarter.status === 'closed' && (
-                        <span className="rounded-full bg-zinc-700/50 px-2 py-0.5 text-xs text-zinc-400">closed</span>
-                      )}
-                      {quarter.status === 'draft' && (
-                        <span className="rounded-full bg-zinc-700/50 px-2 py-0.5 text-xs text-zinc-400">draft</span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-6 text-xs text-zinc-400">
-                      {/* Estimated */}
-                      <div className="flex items-center gap-1">
-                        <span className="text-zinc-500">Estimated</span>
-                        {isActive && quarterProject ? (
-                          <InlineEditNumber
-                            value={summary.estimatedPersonWeeks ?? 0}
-                            onSave={(v) => db.quarterProjects.update(quarterProject.id, { estimatedPersonWeeks: v > 0 ? v : null })}
-                            min={0}
-                            suffix=" pw"
-                            className="text-zinc-200"
-                          />
-                        ) : (
-                          <span className="text-zinc-300">
-                            {summary.estimatedPersonWeeks !== null ? `${summary.estimatedPersonWeeks} pw` : '—'}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Reserved */}
-                      <div className="flex items-center gap-1">
-                        <span className="text-zinc-500">Reserved</span>
-                        <span className="text-zinc-300">{summary.reservedPersonWeeks} pw</span>
-                        <span className="text-zinc-600">({summary.reservedWeeklyPeople} ppl/wk)</span>
-                      </div>
-
-                      {/* Remaining */}
-                      {summary.estimatedPersonWeeks !== null && (
-                        <div className="flex items-center gap-1">
-                          <span className="text-zinc-500">Remaining</span>
-                          <span className={overBudget ? 'text-rose-400 font-medium' : 'text-emerald-400'}>
-                            {overBudget ? '' : '+'}{remaining} pw
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                <div key={alloc.id} className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 hover:border-white/10 transition-colors">
+                  {/* Avatar */}
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-xs font-semibold text-zinc-300">
+                    {initials}
                   </div>
-
-                  {/* Progress bar — only when estimate is set */}
-                  {summary.estimatedPersonWeeks !== null && summary.estimatedPersonWeeks > 0 && (
-                    <div className="mt-3">
-                      <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all ${overBudget ? 'bg-rose-500' : 'bg-sky-500'}`}
-                          style={{ width: `${Math.min(100, (summary.reservedPersonWeeks / summary.estimatedPersonWeeks) * 100).toFixed(1)}%` }}
-                        />
-                      </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-zinc-200 truncate">{person.name}</span>
+                      <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                        {alloc.role}
+                      </span>
                     </div>
+                    {isHistoricalAllocation && showCompletedProjectHistoryInline ? (
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        {alloc.startDate ?? '—'} → {alloc.endDate ?? '—'}
+                      </p>
+                    ) : cap && (
+                      <p className={`mt-0.5 text-xs ${cap.overAllocated ? 'text-rose-400' : 'text-zinc-500'}`}>
+                        {cap.overAllocated
+                          ? `Over capacity · 0w free`
+                          : `${Math.max(0, cap.remainingWeeks)}w free · ${cap.totalAllocatedPct}% allocated`}
+                      </p>
+                    )}
+                  </div>
+                  {!isHistoricalAllocation && (
+                    <button
+                      onClick={() => removeMember(person.id, alloc.role)}
+                      className="hidden group-hover:flex items-center justify-center h-6 w-6 rounded-full text-zinc-600 hover:bg-rose-900/40 hover:text-rose-400 transition-colors text-xs"
+                      title="Remove"
+                    >
+                      ✕
+                    </button>
                   )}
                 </div>
               );
             })}
           </div>
         )}
-      </section>
 
-      {/* ── Delivery Team ── */}
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">Delivery team</h2>
+        {/* History */}
+        {!showCompletedProjectHistoryInline && historicalAllocations.length > 0 && (
           <button
-            onClick={startAddingRole}
-            className="text-xs text-sky-400 hover:text-sky-200"
-          >+ Add role</button>
-        </div>
-
-        {sortedRoles.length === 0 && !addingRole && (
-          <p className="text-sm text-zinc-600 italic">No roles assigned yet.</p>
+            onClick={() => setShowHistory((v) => !v)}
+            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <span className={`transition-transform ${showHistory ? 'rotate-90' : ''}`}>▶</span>
+            {showHistory ? 'Hide history' : 'Show history'}
+          </button>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {sortedRoles.map((role) => {
-            const person = people.find((candidate) => candidate.id === role.personId);
-            const showsCapacity = person ? personNeedsProjectCapacity(person.role) : false;
-            const capacityShare = person
-              ? getPersonProjectCapacityShare(person, projectId, activeProjectRoles, activeAllocations)
-              : { projectId, percentage: 0, isEvenSplit: true };
-            return (
-              <div key={role.id} className="text-sm rounded-lg border border-white/5 bg-white/[0.02] p-3">
-                <p className="mb-1 text-xs text-zinc-500">
-                  <InlineEditSelect
-                    value={role.role as ProjectRoleType}
-                    options={ROLE_OPTIONS.filter((option) => getEditableProjectRoleOptions(projectRoles, role.role).includes(option.value))}
-                    onSave={(v) => saveRoleType(role.id, v)}
-                  />
-                </p>
-                <InlineEditSelect
-                  value={role.personId}
-                  options={getAssignablePeopleForProjectRole(people, projectRoles, role.role, role.personId)
-                    .map((p) => ({ value: p.id, label: p.name }))}
-                  onSave={(v) => saveRolePerson(role.id, v)}
-                  className="font-medium text-zinc-200"
-                />
-                {showsCapacity && (
-                  <div className="mt-3 flex items-center gap-1 text-xs text-zinc-500">
-                    <span>Capacity</span>
-                    <InlineEditNumber
-                      value={capacityShare.percentage}
-                      onSave={(value) => saveRoleCapacity(role.personId, value)}
-                      min={0}
-                      max={100}
-                      suffix="%"
-                      className={capacityShare.isEvenSplit ? 'text-zinc-400' : 'text-zinc-200'}
-                    />
-                    {capacityShare.isEvenSplit && <span className="italic text-zinc-600">(equal)</span>}
-                  </div>
-                )}
-                <button
-                  onClick={() => db.projectRoles.delete(role.id)}
-                  className="mt-3 text-left text-xs text-zinc-600 hover:text-rose-400"
+        {showHistory && (
+          <div className="space-y-2 pt-1">
+            <p className="text-xs font-medium uppercase tracking-[0.15em] text-zinc-600">Past members</p>
+            {historicalAllocations.map((alloc) => (
+              <div key={alloc.id} className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] p-2.5 text-xs text-zinc-500">
+                <span className="font-medium text-zinc-400">{peopleById.get(alloc.personId)?.name ?? 'Unknown'}</span>
+                <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-[10px]">{alloc.role}</span>
+                <span className="ml-auto">{alloc.startDate ?? '—'} → {alloc.endDate ?? '—'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Quarters ─────────────────────────────────────────────── */}
+      {associatedQuarters.length > 0 && (
+        <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-3">
+          <h2 className="text-sm font-semibold text-zinc-200">Quarters</h2>
+          <div className="space-y-2">
+            {[...associatedQuarters].reverse().map(({ quarter, quarterProject }) => {
+              const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'neutral' | 'warning'> = {
+                active: 'success',
+                draft: 'info',
+                closed: 'neutral',
+                archived: 'warning',
+              };
+              const statusLabel: Record<QuarterStatus, string> = {
+                active: 'Active',
+                draft: 'Upcoming',
+                closed: 'Closed',
+                archived: 'Archived',
+              };
+              const hasMeta = quarterProject.priority !== null
+                || quarterProject.estimatedPersonWeeks !== null
+                || quarterProject.targetMilestone
+                || quarterProject.notes;
+              return (
+                <div
+                  key={quarterProject.id}
+                  className="rounded-xl border border-white/5 bg-white/[0.02] p-3 hover:border-white/10 transition-colors"
                 >
-                  Remove role
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        {addingRole && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={newRoleType}
-              onChange={(e) => {
-                const roleType = e.target.value as ProjectRoleType;
-                setNewRoleType(roleType);
-                setNewRolePersonId('');
-                setNewRoleCapacity(100);
-              }}
-              className="rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
-            >
-              {addRoleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select
-              value={newRolePersonId}
-              onChange={(e) => {
-                const personId = e.target.value;
-                setNewRolePersonId(personId);
-                if (newRoleType === 'Engineer' && personId) {
-                  setNewRoleCapacity(getRemainingCapacity(personId));
-                }
-              }}
-              className="rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
-            >
-              <option value="">Select person…</option>
-              {addablePeople.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            {newRoleType === 'Engineer' && newRolePersonId && (
-              <div className="flex items-center gap-1 text-sm text-zinc-400">
-                <span>Capacity</span>
-                <input
-                  type="number"
-                  value={newRoleCapacity}
-                  onChange={(e) => setNewRoleCapacity(Math.max(0, Math.min(100, Number(e.target.value))))}
-                  min={0}
-                  max={100}
-                  className="w-16 rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
-                />
-                <span>%</span>
-              </div>
-            )}
-            <button onClick={addRole} className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500">Add</button>
-            <button onClick={() => { setAddingRole(false); resetRoleForm(); }} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
-            {newRoleType === 'DRI' && currentDri && (
-              <p className="text-xs text-amber-300">This project already has a DRI.</p>
-            )}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Link
+                      href={`/quarters/${quarter.id}`}
+                      className="text-sm font-semibold text-zinc-100 hover:text-sky-200 transition-colors"
+                    >
+                      {quarter.name}
+                    </Link>
+                    <Badge variant={statusVariant[quarter.status]}>
+                      {statusLabel[quarter.status]}
+                    </Badge>
+                    <span className="text-xs text-zinc-500 tabular-nums">
+                      {quarter.startDate} – {quarter.endDate}
+                    </span>
+                    {quarterProject.priority !== null && (
+                      <span className="ml-auto text-xs text-zinc-500">
+                        Priority <span className="font-semibold text-zinc-300">#{quarterProject.priority + 1}</span>
+                      </span>
+                    )}
+                  </div>
+                  {hasMeta && (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-0.5">
+                      {quarterProject.estimatedPersonWeeks !== null && (
+                        <span className="text-xs text-zinc-500">
+                          Estimate{' '}
+                          <span className="font-medium text-zinc-300">
+                            {quarterProject.estimatedPersonWeeks}pw
+                          </span>
+                        </span>
+                      )}
+                      {quarterProject.targetMilestone && (
+                        <span className="text-xs text-zinc-500">
+                          Milestone{' '}
+                          <span className="font-medium text-zinc-300">
+                            {quarterProject.targetMilestone}
+                          </span>
+                        </span>
+                      )}
+                      {quarterProject.notes && (
+                        <span className="text-xs text-zinc-400 italic">{quarterProject.notes}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* ── Stakeholders ── */}
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">Stakeholders</h2>
-          <button
-            onClick={() => setAddingStakeholder(true)}
-            className="text-xs text-sky-400 hover:text-sky-200"
-          >+ Add stakeholder</button>
-        </div>
-
-        {projectStakeholders.length === 0 && !addingStakeholder && (
-          <p className="text-sm text-zinc-600 italic">No stakeholders added yet.</p>
-        )}
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {projectStakeholders.map((stakeholder) => (
-            <div key={stakeholder.id} className="text-sm rounded-lg border border-white/5 bg-white/[0.02] p-3">
-              <p className="mb-1 text-xs text-zinc-500">Stakeholder</p>
-              <InlineEditSelect
-                value={stakeholder.personId}
-                options={people.map((person) => ({ value: person.id, label: person.name }))}
-                onSave={(value) => db.projectStakeholders.update(stakeholder.id, { personId: value })}
-                className="font-medium text-zinc-200"
-              />
-              <button
-                onClick={() => db.projectStakeholders.delete(stakeholder.id)}
-                className="mt-3 text-left text-xs text-zinc-600 hover:text-rose-400"
-              >
-                Remove stakeholder
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {addingStakeholder && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={newStakeholderPersonId}
-              onChange={(e) => setNewStakeholderPersonId(e.target.value)}
-              className="rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
-            >
-              <option value="">Select stakeholder…</option>
-              {people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-            </select>
-            <button onClick={addStakeholder} className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500">Add</button>
-            <button onClick={() => setAddingStakeholder(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
-          </div>
-        )}
-      </section>
-
-      {/* ── Links ── */}
+      {/* ── Links ─────────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-200">Links</h2>
-          <button onClick={() => setAddingLink(true)} className="text-xs text-sky-400 hover:text-sky-200">+ Add link</button>
+          <button
+            onClick={() => { setAddingLink((v) => !v); setNewLinkLabel(''); setNewLinkUrl(''); }}
+            className="text-xs text-sky-400 hover:text-sky-200 transition-colors"
+          >
+            {addingLink ? 'Cancel' : '+ Add link'}
+          </button>
         </div>
 
-        {projectLinks.length === 0 && !addingLink && (
-          <p className="text-sm text-zinc-600 italic">No links yet.</p>
+        {resolvedProject.links.length > 0 && (
+          <div className="space-y-2">
+            {resolvedProject.links.map((link) => (
+              <div key={link.id} className="group flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 hover:border-white/10 transition-colors">
+                <div className="min-w-0">
+                  <a href={link.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-sky-300 hover:text-sky-200 transition-colors">
+                    {link.label}
+                  </a>
+                  <p className="mt-0.5 truncate text-xs text-zinc-600">{link.url}</p>
+                </div>
+                <button
+                  onClick={() => removeProjectLink(link.id)}
+                  className="hidden group-hover:flex items-center justify-center h-6 w-6 rounded-full text-zinc-600 hover:bg-rose-900/40 hover:text-rose-400 transition-colors text-xs shrink-0"
+                  title="Remove link"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
         )}
-
-        <div className="flex flex-wrap gap-2">
-          {projectLinks.map((link) => (
-            <div key={link.id} className="group flex items-center gap-1 rounded-lg border border-sky-400/20 bg-sky-400/10 px-2 py-1">
-              <a href={link.url} target="_blank" rel="noopener noreferrer"
-                className="text-xs text-sky-200 hover:underline">
-                <InlineEditText
-                  value={link.label}
-                  onSave={(v) => db.projectLinks.update(link.id, { label: v })}
-                  className="text-xs text-sky-200"
-                />
-              </a>
-              <button
-                onClick={() => db.projectLinks.delete(link.id)}
-                className="hidden group-hover:block text-zinc-500 hover:text-rose-400 text-xs ml-1"
-              >✕</button>
-            </div>
-          ))}
-        </div>
 
         {addingLink && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <input
-              placeholder="Label"
-              value={newLinkLabel}
-              onChange={(e) => setNewLinkLabel(e.target.value)}
-              className="rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200 w-32"
-            />
-            <input
-              placeholder="https://…"
-              value={newLinkUrl}
-              onChange={(e) => setNewLinkUrl(e.target.value)}
-              className="rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200 w-56"
-            />
-            <button onClick={addLink} className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500">Add</button>
-            <button onClick={() => setAddingLink(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
+          <div className="flex flex-wrap items-end gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] text-zinc-500">Label</label>
+              <input
+                value={newLinkLabel}
+                onChange={(e) => setNewLinkLabel(e.target.value)}
+                placeholder="Design doc"
+                className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+              />
+            </div>
+            <div className="flex flex-col gap-1 min-w-[200px]">
+              <label className="text-[11px] text-zinc-500">URL</label>
+              <input
+                value={newLinkUrl}
+                onChange={(e) => setNewLinkUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') addProjectLink(); }}
+                placeholder="https://…"
+                className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+              />
+            </div>
+            <button
+              onClick={addProjectLink}
+              disabled={!newLinkLabel.trim() || !newLinkUrl.trim()}
+              className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Add link
+            </button>
           </div>
         )}
       </section>
 
-      {/* ── Unknowns ── */}
+      {/* ── Unknowns ──────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">
-            Unknowns <span className="font-normal text-zinc-500">({openUnknowns} open)</span>
-          </h2>
-          <button onClick={() => setAddingUnknown(true)} className="text-xs text-sky-400 hover:text-sky-200">+ Add</button>
+          <h2 className="text-sm font-semibold text-zinc-200">Unknowns</h2>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-500">
+              {resolvedProject.unknowns.filter((u) => !u.resolved).length} open
+            </span>
+            <button
+              onClick={() => { setAddingUnknown((v) => !v); setNewUnknownTitle(''); setNewUnknownDescription(''); }}
+              className="text-xs text-sky-400 hover:text-sky-200 transition-colors"
+            >
+              {addingUnknown ? 'Cancel' : '+ Add unknown'}
+            </button>
+          </div>
         </div>
 
-        {unknowns.length === 0 && !addingUnknown && (
-          <p className="text-sm text-zinc-600 italic">No unknowns logged.</p>
-        )}
-
-        <div className="space-y-2">
-          {unknowns.map((u) => (
-            <div key={u.id} className={`group relative p-3 rounded-lg border text-sm ${
-              u.resolved ? 'border-white/10 bg-white/[0.03] text-zinc-500' : 'border-amber-400/20 bg-amber-400/10 text-amber-100'
-            }`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">
-                    <InlineEditText value={u.title} onSave={(v) => db.unknowns.update(u.id, { title: v })} />
-                  </p>
-                  <p className="text-xs mt-0.5 opacity-80">
-                    <InlineEditText
-                      value={u.description}
-                      onSave={(v) => db.unknowns.update(u.id, { description: v })}
-                      multiline
-                      placeholder="Add description…"
-                    />
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
+        {resolvedProject.unknowns.length > 0 && (
+          <div className="space-y-2">
+            {resolvedProject.unknowns.map((unknown) => (
+              <div
+                key={unknown.id}
+                className={`rounded-xl border p-3 transition-colors ${
+                  unknown.resolved
+                    ? 'border-white/5 bg-white/[0.01] opacity-60'
+                    : 'border-amber-400/10 bg-amber-400/[0.03]'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2 min-w-0">
+                    {!unknown.resolved && (
+                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                    )}
+                    <p className={`text-sm font-medium ${unknown.resolved ? 'text-zinc-500 line-through' : 'text-zinc-200'}`}>
+                      {unknown.title}
+                    </p>
+                  </div>
                   <button
-                    onClick={() => db.unknowns.update(u.id, {
-                      resolved: !u.resolved,
-                      resolvedAt: !u.resolved ? new Date().toISOString() : null,
-                    })}
-                    className="text-xs text-zinc-400 hover:text-zinc-100"
-                  >{u.resolved ? 'Reopen' : 'Resolve'}</button>
-                  <button
-                    onClick={() => db.unknowns.delete(u.id)}
-                    className="hidden group-hover:block text-zinc-500 hover:text-rose-400 text-xs"
-                  >✕</button>
+                    onClick={() => toggleUnknownResolved(unknown.id, !unknown.resolved)}
+                    className="shrink-0 text-xs text-zinc-500 hover:text-sky-300 transition-colors"
+                  >
+                    {unknown.resolved ? 'Reopen' : 'Resolve'}
+                  </button>
                 </div>
+                {unknown.description && (
+                  <p className="mt-1.5 text-sm text-zinc-400 pl-3.5">{unknown.description}</p>
+                )}
+                <p className="mt-1.5 text-xs text-zinc-600 pl-3.5">
+                  {unknown.resolved
+                    ? `Resolved ${unknown.resolvedAt?.slice(0, 10) ?? ''}`
+                    : `Added ${unknown.createdAt.slice(0, 10)}`}
+                </p>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         {addingUnknown && (
-          <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+          <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
             <input
-              placeholder="Title"
               value={newUnknownTitle}
               onChange={(e) => setNewUnknownTitle(e.target.value)}
-              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
+              placeholder="What's unclear?"
+              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
             />
             <textarea
-              placeholder="Description (optional)"
-              value={newUnknownDesc}
-              onChange={(e) => setNewUnknownDesc(e.target.value)}
+              value={newUnknownDescription}
+              onChange={(e) => setNewUnknownDescription(e.target.value)}
+              placeholder="Details (optional)"
               rows={2}
-              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
+              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50 resize-none"
             />
-            <div className="flex gap-2">
-              <button onClick={addUnknown} className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500">Add</button>
-              <button onClick={() => setAddingUnknown(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
-            </div>
+            <button
+              onClick={addProjectUnknown}
+              disabled={!newUnknownTitle.trim() || !activeQuarter}
+              className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Add
+            </button>
+            {!activeQuarter && (
+              <p className="text-xs text-zinc-600">No active quarter — unknowns require one.</p>
+            )}
           </div>
         )}
       </section>
 
-      {/* ── Risks ── */}
+      {/* ── Risks ─────────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">
-            Risks <span className="font-normal text-zinc-500">({openRisks} open)</span>
-          </h2>
-          <button onClick={() => setAddingRisk(true)} className="text-xs text-sky-400 hover:text-sky-200">+ Add</button>
+          <h2 className="text-sm font-semibold text-zinc-200">Risks</h2>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-500">
+              {resolvedProject.risks.filter((r) => !r.mitigated).length} open
+            </span>
+            <button
+              onClick={() => { setAddingRisk((v) => !v); setNewRiskTitle(''); setNewRiskMitigation(''); setNewRiskLikelihood('Medium'); setNewRiskImpact('Medium'); }}
+              className="text-xs text-sky-400 hover:text-sky-200 transition-colors"
+            >
+              {addingRisk ? 'Cancel' : '+ Add risk'}
+            </button>
+          </div>
         </div>
 
-        {risks.length === 0 && !addingRisk && (
-          <p className="text-sm text-zinc-600 italic">No risks logged.</p>
+        {resolvedProject.risks.length > 0 && (
+          <div className="space-y-2">
+            {resolvedProject.risks.map((risk) => {
+              const isHigh = risk.likelihood === 'High' || risk.impact === 'High';
+              const isMed = !isHigh && (risk.likelihood === 'Medium' || risk.impact === 'Medium');
+              const dotColor = risk.mitigated ? 'bg-zinc-600' : isHigh ? 'bg-rose-500' : isMed ? 'bg-amber-400' : 'bg-emerald-400';
+              const borderColor = risk.mitigated
+                ? 'border-white/5'
+                : isHigh ? 'border-rose-500/15' : isMed ? 'border-amber-400/10' : 'border-emerald-400/10';
+              const bgColor = risk.mitigated
+                ? 'bg-white/[0.01]'
+                : isHigh ? 'bg-rose-500/[0.03]' : isMed ? 'bg-amber-400/[0.03]' : 'bg-emerald-400/[0.03]';
+              return (
+                <div
+                  key={risk.id}
+                  className={`rounded-xl border p-3 transition-colors ${borderColor} ${bgColor} ${risk.mitigated ? 'opacity-60' : ''}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2 min-w-0">
+                      <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dotColor}`} />
+                      <div className="min-w-0">
+                        <p className={`text-sm font-medium ${risk.mitigated ? 'text-zinc-500 line-through' : 'text-zinc-200'}`}>
+                          {risk.title}
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
+                            risk.likelihood === 'High' && !risk.mitigated
+                              ? 'border-rose-400/20 text-rose-300'
+                              : risk.likelihood === 'Medium' && !risk.mitigated
+                              ? 'border-amber-400/20 text-amber-300'
+                              : 'border-white/10 text-zinc-500'
+                          }`}>
+                            {risk.likelihood} likelihood
+                          </span>
+                          <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
+                            risk.impact === 'High' && !risk.mitigated
+                              ? 'border-rose-400/20 text-rose-300'
+                              : risk.impact === 'Medium' && !risk.mitigated
+                              ? 'border-amber-400/20 text-amber-300'
+                              : 'border-white/10 text-zinc-500'
+                          }`}>
+                            {risk.impact} impact
+                          </span>
+                        </div>
+                        {risk.mitigationNote && (
+                          <p className="mt-1.5 text-xs text-zinc-400">{risk.mitigationNote}</p>
+                        )}
+                        <p className="mt-1 text-xs text-zinc-600">
+                          {risk.mitigated
+                            ? `Mitigated ${risk.mitigatedAt?.slice(0, 10) ?? ''}`
+                            : `Added ${risk.createdAt.slice(0, 10)}`}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => toggleRiskMitigated(risk.id, !risk.mitigated)}
+                      className="shrink-0 text-xs text-zinc-500 hover:text-sky-300 transition-colors"
+                    >
+                      {risk.mitigated ? 'Reopen' : 'Mitigate'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
 
-        <div className="space-y-2">
-          {risks.map((r) => (
-            <div key={r.id} className={`group relative p-3 rounded-lg border text-sm ${
-              r.mitigated ? 'border-white/10 bg-white/[0.03] text-zinc-500' : 'border-rose-400/20 bg-rose-400/10 text-rose-100'
-            }`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0 space-y-1">
-                  <p className="font-medium">
-                    <InlineEditText value={r.title} onSave={(v) => db.risks.update(r.id, { title: v })} />
-                  </p>
-                  <div className="flex items-center gap-3 text-xs text-zinc-400">
-                    <span>Likelihood:&nbsp;
-                      <InlineEditSelect value={r.likelihood} options={LIKELIHOOD_OPTIONS} onSave={(v) => db.risks.update(r.id, { likelihood: v })} />
-                    </span>
-                    <span>Impact:&nbsp;
-                      <InlineEditSelect value={r.impact} options={IMPACT_OPTIONS} onSave={(v) => db.risks.update(r.id, { impact: v })} />
-                    </span>
-                  </div>
-                  <p className="text-xs opacity-80">
-                    <InlineEditText
-                      value={r.mitigationNote}
-                      onSave={(v) => db.risks.update(r.id, { mitigationNote: v })}
-                      multiline
-                      placeholder="Mitigation note…"
-                    />
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => db.risks.update(r.id, {
-                      mitigated: !r.mitigated,
-                      mitigatedAt: !r.mitigated ? new Date().toISOString() : null,
-                    })}
-                    className="text-xs text-zinc-400 hover:text-zinc-100"
-                  >{r.mitigated ? 'Reopen' : 'Mitigate'}</button>
-                  <button
-                    onClick={() => db.risks.delete(r.id)}
-                    className="hidden group-hover:block text-zinc-500 hover:text-rose-400 text-xs"
-                  >✕</button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
         {addingRisk && (
-          <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+          <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
             <input
-              placeholder="Title"
               value={newRiskTitle}
               onChange={(e) => setNewRiskTitle(e.target.value)}
-              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
+              placeholder="What could go wrong?"
+              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
             />
-            <div className="flex gap-3 text-sm">
-              <label className="flex items-center gap-1 text-zinc-400">
-                Likelihood
-                <select value={newRiskLikelihood} onChange={(e) => setNewRiskLikelihood(e.target.value as RiskLikelihood)}
-                  className="rounded border border-white/10 bg-zinc-900 px-2 py-0.5 text-zinc-200">
-                  {LIKELIHOOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            <div className="flex flex-wrap gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] text-zinc-500">Likelihood</label>
+                <select
+                  value={newRiskLikelihood}
+                  onChange={(e) => setNewRiskLikelihood(e.target.value as RiskLikelihood)}
+                  className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+                >
+                  {RISK_LEVEL_OPTIONS.map((opt) => (
+                    <option key={`l-${opt.value}`} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
-              </label>
-              <label className="flex items-center gap-1 text-zinc-400">
-                Impact
-                <select value={newRiskImpact} onChange={(e) => setNewRiskImpact(e.target.value as RiskImpact)}
-                  className="rounded border border-white/10 bg-zinc-900 px-2 py-0.5 text-zinc-200">
-                  {IMPACT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] text-zinc-500">Impact</label>
+                <select
+                  value={newRiskImpact}
+                  onChange={(e) => setNewRiskImpact(e.target.value as RiskImpact)}
+                  className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+                >
+                  {RISK_LEVEL_OPTIONS.map((opt) => (
+                    <option key={`i-${opt.value}`} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
-              </label>
+              </div>
             </div>
             <textarea
-              placeholder="Mitigation note (optional)"
-              value={newRiskNote}
-              onChange={(e) => setNewRiskNote(e.target.value)}
+              value={newRiskMitigation}
+              onChange={(e) => setNewRiskMitigation(e.target.value)}
+              placeholder="Mitigation plan (optional)"
               rows={2}
-              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-200"
+              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50 resize-none"
             />
-            <div className="flex gap-2">
-              <button onClick={addRisk} className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500">Add</button>
-              <button onClick={() => setAddingRisk(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
-            </div>
+            <button
+              onClick={addProjectRisk}
+              disabled={!newRiskTitle.trim() || !activeQuarter}
+              className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Add
+            </button>
+            {!activeQuarter && (
+              <p className="text-xs text-zinc-600">No active quarter — risks require one.</p>
+            )}
           </div>
         )}
       </section>

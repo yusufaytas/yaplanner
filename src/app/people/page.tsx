@@ -3,40 +3,30 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import Link from 'next/link';
-import { db } from '@/lib/db';
 import { PersonCard } from '@/components/people/PersonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { resolveCreatedPersonSubteamId } from '@/lib/people-directory';
+import { createPerson, deletePerson, getPeoplePageData } from '@/lib/people';
+import type { Role } from '@/lib/types';
 
 function uid() { return crypto.randomUUID(); }
 
 export default function PeoplePage() {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
-  const [role, setRole] = useState('Engineer');
+  const [role, setRole] = useState<Role>('Engineer');
   const [subteamId, setSubteamId] = useState('');
   const isEngineer = role === 'Engineer';
 
-  const data = useLiveQuery(async () => {
-    const [people, subteams] = await Promise.all([
-      db.people.orderBy('name').toArray(),
-      db.subteams.orderBy('name').toArray(),
-    ]);
-    return { people, subteams };
-  });
+  const data = useLiveQuery(() => getPeoplePageData());
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
 
   const { people, subteams } = data;
   const subteamById = new Map(subteams.map((s) => [s.id, s]));
 
-  async function createPerson() {
+  async function createPersonHandler() {
     if (!name.trim()) return;
-    await db.people.add({
-      id: uid(), name: name.trim(), email: null, role,
-      defaultCapacity: 100, subteamId: resolveCreatedPersonSubteamId(role, subteamId),
-      notes: '', createdAt: new Date().toISOString(),
-    });
+    await createPerson({ id: uid(), name, role, subteamId });
     setName(''); setAdding(false);
   }
 
@@ -57,13 +47,13 @@ export default function PeoplePage() {
             placeholder="Full name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') createPerson(); if (e.key === 'Escape') setAdding(false); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') createPersonHandler(); if (e.key === 'Escape') setAdding(false); }}
             className="rounded border border-white/10 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 w-48 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
           />
           <select
             value={role}
             onChange={(e) => {
-              const nextRole = e.target.value;
+              const nextRole = e.target.value as Role;
               setRole(nextRole);
               if (nextRole !== 'Engineer') setSubteamId('');
             }}
@@ -82,7 +72,7 @@ export default function PeoplePage() {
             <option value="">{isEngineer ? 'No subteam' : 'Engineers only'}</option>
             {subteams.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <button onClick={createPerson} className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500">Add</button>
+          <button onClick={createPersonHandler} className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500">Add</button>
           <button onClick={() => setAdding(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Cancel</button>
         </div>
       )}
@@ -99,7 +89,7 @@ export default function PeoplePage() {
                   <PersonCard person={person} subteamName={subteam?.name} />
                 </Link>
                 <button
-                  onClick={() => db.people.delete(person.id)}
+                  onClick={() => deletePerson(person.id)}
                   className="absolute top-2 right-2 hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-zinc-500 hover:bg-rose-900/60 hover:text-rose-400 text-xs"
                   title="Delete person"
                 >✕</button>

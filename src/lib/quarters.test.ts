@@ -92,7 +92,7 @@ describe('quarter status helpers', () => {
 
   it('closes a non-archived quarter after its end date', () => {
     expect(getAutoQuarterStatus({
-      status: 'active',
+      status: 'draft',
       startDate: '2026-01-01',
       endDate: '2026-03-31',
     }, '2026-04-01')).toBe('closed');
@@ -108,11 +108,27 @@ describe('quarter status helpers', () => {
 
   it('maps edit status between stored and editable quarter modes', () => {
     expect(getQuarterEditStatus('draft')).toBe('auto');
-    expect(getQuarterEditStatus('active')).toBe('auto');
-    expect(getQuarterEditStatus('closed')).toBe('auto');
+    expect(getQuarterEditStatus('active')).toBe('active');
+    expect(getQuarterEditStatus('closed')).toBe('closed');
     expect(getQuarterEditStatus('archived')).toBe('archived');
     expect(getStoredQuarterStatusForEditStatus('auto')).toBe('draft');
+    expect(getStoredQuarterStatusForEditStatus('active')).toBe('active');
+    expect(getStoredQuarterStatusForEditStatus('closed')).toBe('closed');
     expect(getStoredQuarterStatusForEditStatus('archived')).toBe('archived');
+  });
+
+  it('respects manual active/closed overrides regardless of dates', () => {
+    expect(getAutoQuarterStatus({
+      status: 'active',
+      startDate: '2026-07-01',
+      endDate: '2026-09-30',
+    }, '2026-05-11')).toBe('active');
+
+    expect(getAutoQuarterStatus({
+      status: 'closed',
+      startDate: '2026-04-01',
+      endDate: '2026-06-30',
+    }, '2026-05-11')).toBe('closed');
   });
 
   it('returns the current active quarter by date', () => {

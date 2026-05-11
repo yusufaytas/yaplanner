@@ -1,96 +1,121 @@
 import { describe, expect, it } from 'vitest';
-import { getQuarterPeopleLists, getQuarterPersonProjectSummary } from './quarter-people';
-import type { Allocation, Person, ProjectRole, Quarter, QuarterPerson } from './types';
+import { getQuarterPeopleLists } from './quarter-people';
+import type { Person, QuarterPerson } from './types';
 
-const quarter: Quarter = {
-  id: 'q1',
-  name: '2026-Q1',
-  startDate: '2026-01-05',
-  endDate: '2026-03-30',
-  status: 'active',
-  createdAt: '2026-01-01T00:00:00.000Z',
-  createdFromQuarterId: null,
-  capacityLineAfter: null,
-  overhead: { items: [] },
-};
+function makePerson(overrides: Partial<Person> & Pick<Person, 'id' | 'role'>): Person {
+  return {
+    name: overrides.id,
+    email: null,
+    defaultCapacity: 100,
+    subteamId: null,
+    notes: '',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
 
-describe('quarter people helpers', () => {
-  it('splits quarter members from addable engineers and filters search', () => {
-    const people: Person[] = [
-      { id: 'p1', name: 'Alex', email: null, role: 'Engineer', defaultCapacity: 100, subteamId: null, notes: '', createdAt: '' },
-      { id: 'p2', name: 'Bri', email: null, role: 'Engineer', defaultCapacity: 100, subteamId: null, notes: '', createdAt: '' },
-      { id: 'p3', name: 'Casey', email: null, role: 'PM', defaultCapacity: 100, subteamId: null, notes: '', createdAt: '' },
-    ];
-    const quarterPeople: QuarterPerson[] = [
-      { id: 'qp1', quarterId: 'q1', personId: 'p1', subteamId: null, inactive: false, quarterCapacity: 100, overheadOverride: null },
-      { id: 'qp2', quarterId: 'q1', personId: 'p3', subteamId: null, inactive: false, quarterCapacity: 100, overheadOverride: null },
-    ];
+function makeQuarterPerson(personId: string, quarterId = 'q1'): QuarterPerson {
+  return {
+    id: `qp-${personId}`,
+    quarterId,
+    personId,
+    subteamId: null,
+    inactive: false,
+    quarterCapacity: 100,
+    overheadOverride: null,
+  };
+}
 
-    const lists = getQuarterPeopleLists(people, quarterPeople, 'br');
+const engineer1 = makePerson({ id: 'eng-1', name: 'Alice Smith', role: 'Engineer' });
+const engineer2 = makePerson({ id: 'eng-2', name: 'Bob Jones', role: 'Engineer' });
+const dri1 = makePerson({ id: 'dri-1', name: 'Carol DRI', role: 'DRI' });
+const em1 = makePerson({ id: 'em-1', name: 'Dave EM', role: 'EM' });
+const pm1 = makePerson({ id: 'pm-1', name: 'Eve PM', role: 'PM' });
 
-    expect(lists.inQuarter.map((person) => person.id)).toEqual(['p1', 'p3']);
-    expect(lists.sortedInQuarter.map((person) => person.id)).toEqual(['p1']);
-    expect(lists.notInQuarter.map((person) => person.id)).toEqual(['p2']);
-    expect(lists.filteredNotInQuarter.map((person) => person.id)).toEqual(['p2']);
-    expect(lists.quarterPersonByPersonId.get('p1')?.id).toBe('qp1');
+describe('getQuarterPeopleLists', () => {
+  it('separates people into inQuarter and notInQuarter', () => {
+    const people = [engineer1, engineer2];
+    const quarterPeople = [makeQuarterPerson('eng-1')];
+    const result = getQuarterPeopleLists(people, quarterPeople, '');
+    expect(result.inQuarter.map((p) => p.id)).toEqual(['eng-1']);
+    expect(result.notInQuarter.map((p) => p.id)).toEqual(['eng-2']);
   });
 
-  it('computes allocation summary for a capacity-tracking person', () => {
-    const person: Person = {
-      id: 'p1',
-      name: 'Alex',
-      email: null,
-      role: 'Engineer',
-      defaultCapacity: 100,
-      subteamId: null,
-      notes: '',
-      createdAt: '',
-    };
-    const quarterPerson: QuarterPerson = {
-      id: 'qp1',
-      quarterId: 'q1',
-      personId: 'p1',
-      subteamId: null,
-      inactive: false,
-      quarterCapacity: 100,
-      overheadOverride: null,
-    };
-    const projectRoles: ProjectRole[] = [
-      { id: 'r1', quarterId: 'q1', projectId: 'proj-1', personId: 'p1', role: 'Engineer' },
-      { id: 'r2', quarterId: 'q1', projectId: 'proj-2', personId: 'p1', role: 'Engineer' },
-    ];
-    const allocations: Allocation[] = [
-      { id: 'a1', quarterId: 'q1', personId: 'p1', projectId: 'proj-1', weekStart: '2026-01-05', percentage: 60 },
-      { id: 'a2', quarterId: 'q1', personId: 'p1', projectId: 'proj-2', weekStart: '2026-01-05', percentage: 40 },
-    ];
-
-    const summary = getQuarterPersonProjectSummary(quarter, person, quarterPerson, projectRoles, allocations);
-
-    expect(summary.tracksCapacity).toBe(true);
-    expect(summary.availableWeeks).toBeGreaterThan(0);
-    expect(summary.totalAllocatedPct).toBe(100);
-    expect(summary.allocatedWeeks).toBe(summary.availableWeeks);
-    expect(summary.remainingWeeks).toBe(0);
-    expect(summary.overAllocated).toBe(false);
+  it('only includes capacity-tracking roles (Engineer, DRI) in notInQuarter', () => {
+    const people = [engineer1, em1, pm1];
+    const quarterPeople = [];
+    const result = getQuarterPeopleLists(people, quarterPeople, '');
+    // EM and PM do not track capacity, so they should not appear in notInQuarter
+    expect(result.notInQuarter.map((p) => p.id)).toEqual(['eng-1']);
   });
 
-  it('returns a non-capacity summary for PMs', () => {
-    const person: Person = {
-      id: 'p2',
-      name: 'Bri',
-      email: null,
-      role: 'PM',
-      defaultCapacity: 100,
-      subteamId: null,
-      notes: '',
-      createdAt: '',
-    };
+  it('includes all roles in inQuarter', () => {
+    const people = [engineer1, em1, pm1];
+    const quarterPeople = [makeQuarterPerson('eng-1'), makeQuarterPerson('em-1'), makeQuarterPerson('pm-1')];
+    const result = getQuarterPeopleLists(people, quarterPeople, '');
+    expect(result.inQuarter).toHaveLength(3);
+  });
 
-    const summary = getQuarterPersonProjectSummary(quarter, person, undefined, [], []);
+  it('sortedInQuarter only contains capacity-tracking people, sorted by name', () => {
+    const people = [engineer2, engineer1, dri1, em1];
+    const quarterPeople = [
+      makeQuarterPerson('eng-1'),
+      makeQuarterPerson('eng-2'),
+      makeQuarterPerson('dri-1'),
+      makeQuarterPerson('em-1'),
+    ];
+    const result = getQuarterPeopleLists(people, quarterPeople, '');
+    // em1 is not capacity-tracking, so excluded from sortedInQuarter
+    expect(result.sortedInQuarter.map((p) => p.id)).toEqual(['eng-1', 'eng-2', 'dri-1'].sort((a, b) => {
+      const nameA = people.find((p) => p.id === a)!.name;
+      const nameB = people.find((p) => p.id === b)!.name;
+      return nameA.localeCompare(nameB);
+    }));
+  });
 
-    expect(summary.tracksCapacity).toBe(false);
-    expect(summary.totalAllocatedPct).toBe(0);
-    expect(summary.allocatedWeeks).toBe(0);
-    expect(summary.overAllocated).toBe(false);
+  it('filters notInQuarter by search string (case-insensitive)', () => {
+    const people = [engineer1, engineer2];
+    const quarterPeople = [];
+    const result = getQuarterPeopleLists(people, quarterPeople, 'alice');
+    expect(result.filteredNotInQuarter.map((p) => p.id)).toEqual(['eng-1']);
+  });
+
+  it('returns all notInQuarter when search is empty', () => {
+    const people = [engineer1, engineer2];
+    const quarterPeople = [];
+    const result = getQuarterPeopleLists(people, quarterPeople, '');
+    expect(result.filteredNotInQuarter).toHaveLength(2);
+  });
+
+  it('returns empty filteredNotInQuarter when search matches nothing', () => {
+    const people = [engineer1, engineer2];
+    const quarterPeople = [];
+    const result = getQuarterPeopleLists(people, quarterPeople, 'zzz');
+    expect(result.filteredNotInQuarter).toHaveLength(0);
+  });
+
+  it('trims whitespace from the search string', () => {
+    const people = [engineer1, engineer2];
+    const quarterPeople = [];
+    const result = getQuarterPeopleLists(people, quarterPeople, '  alice  ');
+    expect(result.filteredNotInQuarter.map((p) => p.id)).toEqual(['eng-1']);
+  });
+
+  it('builds a quarterPersonByPersonId map keyed by personId', () => {
+    const people = [engineer1, engineer2];
+    const quarterPeople = [makeQuarterPerson('eng-1')];
+    const result = getQuarterPeopleLists(people, quarterPeople, '');
+    expect(result.quarterPersonByPersonId.has('eng-1')).toBe(true);
+    expect(result.quarterPersonByPersonId.has('eng-2')).toBe(false);
+    expect(result.quarterPersonByPersonId.get('eng-1')?.id).toBe('qp-eng-1');
+  });
+
+  it('returns all empty collections for empty inputs', () => {
+    const result = getQuarterPeopleLists([], [], '');
+    expect(result.inQuarter).toHaveLength(0);
+    expect(result.notInQuarter).toHaveLength(0);
+    expect(result.sortedInQuarter).toHaveLength(0);
+    expect(result.filteredNotInQuarter).toHaveLength(0);
+    expect(result.quarterPersonByPersonId.size).toBe(0);
   });
 });

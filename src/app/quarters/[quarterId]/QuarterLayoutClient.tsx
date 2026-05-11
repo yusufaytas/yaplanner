@@ -4,13 +4,13 @@ import { useState } from 'react';
 import { useParams, usePathname } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
-import { db } from '@/lib/db';
 import { Badge } from '@/components/ui/Badge';
 import type { QuarterStatus } from '@/lib/types';
 import {
+  getQuarterLayoutData,
   getQuarterEditStatus,
   getStoredQuarterStatusForEditStatus,
-  listResolvedQuarters,
+  updateQuarter,
   updateQuarterDraftEndDate,
   updateQuarterDraftStartDate,
   type QuarterEditStatus,
@@ -33,19 +33,7 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
   const [endDateManuallyEdited, setEndDateManuallyEdited] = useState(false);
   const [draftStatus, setDraftStatus] = useState<QuarterEditStatus>('auto');
   const [saving, setSaving] = useState(false);
-  const data = useLiveQuery(
-    async () => {
-      const [rawQuarter, resolvedQuarters] = await Promise.all([
-        db.quarters.get(quarterId),
-        listResolvedQuarters(),
-      ]);
-      return {
-        rawQuarter,
-        quarter: resolvedQuarters.find((entry) => entry.id === quarterId) ?? null,
-      };
-    },
-    [quarterId],
-  );
+  const data = useLiveQuery(() => getQuarterLayoutData(quarterId), [quarterId]);
 
   const quarter = data?.quarter ?? null;
   const rawQuarter = data?.rawQuarter ?? null;
@@ -75,7 +63,7 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
     if (!rawQuarter || !draftName.trim() || !draftStartDate || !draftEndDate) return;
     setSaving(true);
     try {
-      await db.quarters.update(rawQuarter.id, {
+      await updateQuarter(rawQuarter.id, {
         name: draftName.trim(),
         startDate: draftStartDate,
         endDate: draftEndDate,
@@ -174,7 +162,9 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
                 onChange={(e) => setDraftStatus(e.target.value as QuarterEditStatus)}
                 className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:border-sky-500/50 focus:outline-none"
               >
-                <option value="auto">Auto</option>
+                <option value="auto">Auto (date-based)</option>
+                <option value="active">Active</option>
+                <option value="closed">Closed</option>
                 <option value="archived">Archived</option>
               </select>
             </div>

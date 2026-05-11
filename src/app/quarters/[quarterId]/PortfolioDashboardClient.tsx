@@ -4,27 +4,23 @@ import React, { useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
-import { db } from '@/lib/db';
 import { ProjectStatusBadge } from '@/components/projects/ProjectStatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { InlineEditNumber } from '@/components/ui/InlineEdit';
 import type { QuarterProject } from '@/lib/types';
-import { getProjectCapacitySummary, getQuarterCapacitySummary } from '@/lib/quarter-capacity';
+import { getProjectCapacitySummary, getQuarterCapacitySummary } from '@/lib/person-capacity';
 import { getAddableProjects, getAutoCapacityLineAfter, sortQuarterProjects } from '@/lib/quarter-portfolio';
 import { planAddProjectToQuarter } from '@/lib/quarter-projects';
+import {
+  addProjectToQuarter as persistAddProjectToQuarter,
+  getAddProjectToQuarterData,
+  getPortfolioDashboardData,
+  savePriorityOrder,
+  updateQuarter,
+  updateQuarterProjectEstimate,
+} from '@/lib/quarters';
 
 function uid() { return crypto.randomUUID(); }
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
-
-/** Persist a new priority order to Dexie in one transaction. */
-async function savePriorityOrder(ordered: QuarterProject[]) {
-  await db.transaction('rw', db.quarterProjects, async () => {
-    for (let i = 0; i < ordered.length; i++) {
-      await db.quarterProjects.update(ordered[i].id, { priority: i });
-    }
-  });
-}
 
 // ─── component ────────────────────────────────────────────────────────────────
 
@@ -41,34 +37,22 @@ export default function PortfolioDashboardClient() {
   const [addingProject, setAddingProject] = useState(false);
   const [newProjectId, setNewProjectId] = useState('');
 
-  const data = useLiveQuery(async () => {
-    const [quarter, quarterProjects, projects, people, quarterPeople, subteams, projectRoles, allocations] =
-      await Promise.all([
-        db.quarters.get(quarterId),
-        db.quarterProjects.where('quarterId').equals(quarterId).toArray(),
-        db.projects.toArray(),
-        db.people.toArray(),
-        db.quarterPeople.where('quarterId').equals(quarterId).toArray(),
-        db.subteams.toArray(),
-        db.projectRoles.where('quarterId').equals(quarterId).toArray(),
-        db.allocations.where('quarterId').equals(quarterId).toArray(),
-      ]);
-    return { quarter, quarterProjects, projects, people, quarterPeople, subteams, projectRoles, allocations };
-  }, [quarterId]);
+  const data = useLiveQuery(() => getPortfolioDashboardData(quarterId), [quarterId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
 
-  const { quarter, quarterProjects, projects, people, quarterPeople, subteams, projectRoles, allocations } = data;
+  const { quarter, quarterProjects, projects, people, quarterPeople, subteams, allocations } = data;
 
   const projectById = new Map(projects.map((p) => [p.id, p]));
   const personById = new Map(people.map((p) => [p.id, p]));
   const subteamById = new Map(subteams.map((s) => [s.id, s]));
 
-  const rolesByProject = new Map<string, typeof projectRoles>();
-  for (const role of projectRoles) {
-    const arr = rolesByProject.get(role.projectId) ?? [];
-    arr.push(role);
-    rolesByProject.set(role.projectId, arr);
+  const allocationsByProject = new Map<string, typeof allocations>();
+  for (const allocation of allocations) {
+    if (!allocation.projectId) continue;
+    const arr = allocationsByProject.get(allocation.projectId) ?? [];
+    arr.push(allocation);
+    allocationsByProject.set(allocation.projectId, arr);
   }
 
   const sorted = sortQuarterProjects(quarterProjects);
@@ -78,42 +62,18 @@ export default function PortfolioDashboardClient() {
 
   async function addProject() {
     if (!newProjectId || !quarter) return;
-    const [allProjectRoles, allAllocations, allQuarters] = await Promise.all([
-      db.projectRoles
-      .where('projectId').equals(newProjectId)
-      .toArray(),
-      db.allocations.where('projectId').equals(newProjectId).toArray(),
-      db.quarters.toArray(),
-    ]);
+    const { allAllocations } = await getAddProjectToQuarterData(quarterId, newProjectId);
     const plan = planAddProjectToQuarter({
       quarter,
       quarterProjects,
       quarterPeople,
       projects,
       people,
-      allProjectRoles,
       allAllocations,
-      allQuarters,
     }, newProjectId, uid);
     if (!plan) return;
 
-    await db.transaction('rw', [db.quarterProjects, db.projectRoles, db.quarterPeople, db.allocations], async () => {
-      await db.quarterProjects.add(plan.quarterProjectToCreate);
-      if (plan.quarterRolesToCreate.length > 0) {
-        await db.projectRoles.bulkAdd(plan.quarterRolesToCreate);
-      }
-      if (plan.quarterPeopleToCreate.length > 0) {
-        await db.quarterPeople.bulkAdd(plan.quarterPeopleToCreate);
-      }
-      for (const allocationPlan of plan.allocationPlans) {
-        if (allocationPlan.allocationsToDelete.length > 0) {
-          await db.allocations.bulkDelete(allocationPlan.allocationsToDelete);
-        }
-        if (allocationPlan.allocationsToUpsert.length > 0) {
-          await db.allocations.bulkPut(allocationPlan.allocationsToUpsert);
-        }
-      }
-    });
+    await persistAddProjectToQuarter(plan);
 
     setNewProjectId('');
     setAddingProject(false);
@@ -196,7 +156,7 @@ export default function PortfolioDashboardClient() {
     setDragOverIndex(null);
     if (!quarter) return;
     // Drop on row index means line goes AFTER that row
-    await db.quarters.update(quarter.id, { capacityLineAfter: index });
+    await updateQuarter(quarter.id, { capacityLineAfter: index });
   }
 
   async function handleLineDragOverRow(e: React.DragEvent) {
@@ -208,13 +168,13 @@ export default function PortfolioDashboardClient() {
   async function moveLineUp() {
     if (!quarter) return;
     const current = quarter.capacityLineAfter ?? sorted.length - 1;
-    if (current > 0) await db.quarters.update(quarter.id, { capacityLineAfter: current - 1 });
+    if (current > 0) await updateQuarter(quarter.id, { capacityLineAfter: current - 1 });
   }
 
   async function moveLineDown() {
     if (!quarter) return;
     const current = quarter.capacityLineAfter ?? 0;
-    if (current < sorted.length - 1) await db.quarters.update(quarter.id, { capacityLineAfter: current + 1 });
+    if (current < sorted.length - 1) await updateQuarter(quarter.id, { capacityLineAfter: current + 1 });
   }
 
   // ── render ──────────────────────────────────────────────────────────────
@@ -303,11 +263,11 @@ export default function PortfolioDashboardClient() {
               {sorted.map((qp, index) => {
                 const project = projectById.get(qp.projectId);
                 if (!project) return null;
-                const roles = rolesByProject.get(project.id) ?? [];
-                const dri = roles.find((r) => r.role === 'DRI');
-                const em = roles.find((r) => r.role === 'EM');
-                const pm = roles.find((r) => r.role === 'PM');
-                const subteam = project.owningSubteamId ? subteamById.get(project.owningSubteamId) : null;
+                const roles = allocationsByProject.get(project.id) ?? [];
+                const dri = roles.find((r) => r.role === 'DRI' && r.endDate === null);
+                const em = roles.find((r) => r.role === 'EM' && r.endDate === null);
+                const pm = roles.find((r) => r.role === 'PM' && r.endDate === null);
+                const subteam = project.subteamId ? subteamById.get(project.subteamId) : null;
                 const capacity = quarter
                   ? getProjectCapacitySummary({
                     projectId: project.id,
@@ -315,7 +275,6 @@ export default function PortfolioDashboardClient() {
                     estimatedPersonWeeks: qp.estimatedPersonWeeks,
                     people,
                     quarterPeople,
-                    activeProjectRoles: projectRoles,
                     activeAllocations: allocations,
                   })
                   : null;
@@ -385,7 +344,7 @@ export default function PortfolioDashboardClient() {
                       <td className="py-3 pr-4 text-zinc-200">
                         <InlineEditNumber
                           value={qp.estimatedPersonWeeks ?? 0}
-                          onSave={(value) => db.quarterProjects.update(qp.id, { estimatedPersonWeeks: value })}
+                          onSave={(value) => updateQuarterProjectEstimate(qp.id, value)}
                           min={0}
                           max={999}
                           suffix="pw"

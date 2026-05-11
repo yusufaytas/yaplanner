@@ -26,33 +26,13 @@ export function getQuarterWeeks(startDate: string, endDate: string): string[] {
   return weeks;
 }
 
-/** Format a week start date as a short label, e.g. "W27" or "Jun 30" */
-export function formatWeekLabel(weekStart: string): string {
-  const date = new Date(weekStart);
-  const month = date.toLocaleString('en', { month: 'short', timeZone: 'UTC' });
-  const day = date.getUTCDate();
-  return `${month} ${day}`;
-}
-
-/** Returns true if the given ISO date falls within [weekStart, weekStart+6d] */
-export function dateIsInWeek(date: string, weekStart: string): boolean {
-  const d = new Date(date);
-  const ws = new Date(weekStart);
-  const we = new Date(weekStart);
-  we.setUTCDate(we.getUTCDate() + 6);
-  return d >= ws && d <= we;
-}
-
-/** Returns true if a date range [rangeStart, rangeEnd] overlaps a week [weekStart, weekStart+6d] */
-export function rangeOverlapsWeek(
-  rangeStart: string,
-  rangeEnd: string,
-  weekStart: string,
-): boolean {
-  const rs = new Date(rangeStart);
-  const re = new Date(rangeEnd);
-  const ws = new Date(weekStart);
-  const we = new Date(weekStart);
-  we.setUTCDate(we.getUTCDate() + 6);
-  return rs <= we && re >= ws;
+/**
+ * Returns the precise duration of the quarter in weeks based on the inclusive
+ * day range, rather than the number of overlapping Monday buckets.
+ */
+export function getQuarterDurationWeeks(startDate: string, endDate: string): number {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const inclusiveDays = ((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  return inclusiveDays > 0 ? inclusiveDays / 7 : 0;
 }

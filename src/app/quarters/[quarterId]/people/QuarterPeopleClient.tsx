@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
-import { db } from '@/lib/db';
-import { getQuarterPeopleLists, getQuarterPersonProjectSummary } from '@/lib/quarter-people';
+import { getQuarterPeopleLists } from '@/lib/quarter-people';
+import { getQuarterPersonProjectSummary } from '@/lib/person-capacity';
+import { addPersonToQuarter, getQuarterPeoplePageData, removePersonFromQuarter, updateQuarterPerson } from '@/lib/quarters';
 
 function uid() { return crypto.randomUUID(); }
 
@@ -13,46 +14,34 @@ export default function QuarterPeopleClient() {
   const { quarterId } = useParams<{ quarterId: string }>();
   const [search, setSearch] = useState('');
 
-  const data = useLiveQuery(async () => {
-    const [quarter, people, subteams, quarterPeople, projectRoles, allocations] = await Promise.all([
-      db.quarters.get(quarterId),
-      db.people.orderBy('name').toArray(),
-      db.subteams.toArray(),
-      db.quarterPeople.where('quarterId').equals(quarterId).toArray(),
-      db.projectRoles.where('quarterId').equals(quarterId).toArray(),
-      db.allocations.where('quarterId').equals(quarterId).toArray(),
-    ]);
-    return { quarter, people, subteams, quarterPeople, projectRoles, allocations };
-  }, [quarterId]);
+  const data = useLiveQuery(() => getQuarterPeoplePageData(quarterId), [quarterId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
   if (!data.quarter) return <div className="text-sm text-zinc-400">Quarter not found.</div>;
 
-  const { quarter, people, subteams, quarterPeople, projectRoles, allocations } = data;
+  const { quarter, people, subteams, quarterPeople, allocations } = data;
   const subteamById = new Map(subteams.map((s) => [s.id, s]));
   const { inQuarter, sortedInQuarter: sorted, notInQuarter, filteredNotInQuarter, quarterPersonByPersonId } =
     getQuarterPeopleLists(people, quarterPeople, search);
 
   async function addToQuarter(personId: string) {
-    await db.quarterPeople.add({
+    await addPersonToQuarter({
       id: uid(),
       quarterId,
       personId,
       subteamId: people.find((p) => p.id === personId)?.subteamId ?? null,
-      inactive: false,
       quarterCapacity: people.find((p) => p.id === personId)?.defaultCapacity ?? 100,
-      overheadOverride: null,
     });
   }
 
   async function removeFromQuarter(personId: string) {
     const qp = quarterPersonByPersonId.get(personId);
-    if (qp) await db.quarterPeople.delete(qp.id);
+    if (qp) await removePersonFromQuarter(qp.id);
   }
 
   async function toggleInactive(personId: string) {
     const qp = quarterPersonByPersonId.get(personId);
-    if (qp) await db.quarterPeople.update(qp.id, { inactive: !qp.inactive });
+    if (qp) await updateQuarterPerson(qp.id, { inactive: !qp.inactive });
   }
 
   return (
@@ -73,7 +62,7 @@ export default function QuarterPeopleClient() {
           <div className="divide-y divide-white/5">
             {sorted.map((person) => {
               const qp = quarterPersonByPersonId.get(person.id)!;
-              const summary = getQuarterPersonProjectSummary(quarter, person, qp, projectRoles, allocations);
+              const summary = getQuarterPersonProjectSummary(quarter, person, qp, allocations);
               const subteam = subteamById.get(qp.subteamId ?? person.subteamId ?? '');
               return (
                 <div key={person.id} className={`flex items-center gap-3 py-2.5 first:pt-0 last:pb-0 ${qp.inactive ? 'opacity-40' : ''}`}>
@@ -103,7 +92,7 @@ export default function QuarterPeopleClient() {
                         <span className="text-zinc-500" title="Available person-weeks">{summary.availableWeeks} Estimated</span>
                         <span className="text-zinc-400" title="Allocated person-weeks">{summary.allocatedWeeks} Allocated</span>
                         <span className={summary.overAllocated ? 'text-rose-400 font-medium' : 'text-emerald-400'} title="Remaining person-weeks">
-                          {summary.overAllocated ? '' : '+'}{summary.remainingWeeks} rem
+                          {summary.overAllocated ? '0 rem' : `+${Math.max(0, summary.remainingWeeks)} rem`}
                         </span>
                       </>
                     ) : (

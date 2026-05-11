@@ -1,250 +1,265 @@
 import { describe, expect, it } from 'vitest';
-import { planAddProjectToQuarter, planEnsureProjectInQuarter, projectRoleCreatesActiveQuarterEntry } from './quarter-projects';
-import type { Allocation, Person, Project, ProjectRole, Quarter, QuarterPerson, QuarterProject } from './types';
+import { planAddProjectToQuarter } from './quarter-projects';
+import type { Allocation, Person, Project, Quarter, QuarterPerson, QuarterProject } from './types';
 
 const quarter: Quarter = {
-  id: 'quarter-2',
-  name: '2026-Q3',
-  startDate: '2026-07-01',
-  endDate: '2026-09-30',
-  status: 'active',
-  createdAt: '2026-01-01T00:00:00.000Z',
-  createdFromQuarterId: null,
-  capacityLineAfter: null,
-  overhead: { items: [] },
-};
-
-const previousQuarter: Quarter = {
-  id: 'quarter-1',
+  id: 'q1',
   name: '2026-Q2',
   startDate: '2026-04-01',
   endDate: '2026-06-30',
-  status: 'closed',
-  createdAt: '2026-01-01T00:00:00.000Z',
+  status: 'active',
+  createdAt: '2026-03-01T00:00:00.000Z',
   createdFromQuarterId: null,
   capacityLineAfter: null,
   overhead: { items: [] },
 };
 
-const olderQuarter: Quarter = {
-  id: 'quarter-0',
-  name: '2026-Q1',
-  startDate: '2026-01-01',
-  endDate: '2026-03-31',
-  status: 'closed',
-  createdAt: '2026-01-01T00:00:00.000Z',
-  createdFromQuarterId: null,
-  capacityLineAfter: null,
-  overhead: { items: [] },
-};
-
-const project: Project = {
-  id: 'project-1',
-  name: 'Platform Infra Hardening',
-  description: '',
-  status: 'Active',
-  tags: [],
-  owningSubteamId: null,
-  createdAt: '2026-01-01T00:00:00.000Z',
-  archivedAt: null,
-};
-
-const people: Person[] = [
-  {
-    id: 'eng-1',
-    name: 'Engineer One',
-    email: null,
-    role: 'Engineer',
-    defaultCapacity: 100,
-    subteamId: 'subteam-1',
-    notes: '',
-    createdAt: '2026-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'pm-1',
-    name: 'PM One',
-    email: null,
-    role: 'PM',
-    defaultCapacity: 100,
-    subteamId: null,
-    notes: '',
-    createdAt: '2026-01-01T00:00:00.000Z',
-  },
-];
-
-const existingQuarterProjects: QuarterProject[] = [{
-  id: 'qp-1',
-  quarterId: 'quarter-2',
-  projectId: 'project-existing',
-  status: 'Active',
-  priority: 0,
-  estimatedPersonWeeks: null,
-  notes: '',
-  plannedStartWeek: null,
-  plannedEndWeek: null,
-  targetMilestone: null,
-}];
-
-function makeQuarterPerson(personId: string): QuarterPerson {
+function makeProject(overrides: Partial<Project> & Pick<Project, 'id'>): Project {
   return {
-    id: `quarter-person-${personId}`,
-    quarterId: quarter.id,
-    personId,
+    name: overrides.id,
+    description: '',
+    status: 'Active',
+    tags: [],
     subteamId: null,
-    inactive: false,
-    quarterCapacity: 100,
-    overheadOverride: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    archivedAt: null,
+    links: [],
+    unknowns: [],
+    risks: [],
+    ...overrides,
   };
 }
 
+function makePerson(overrides: Partial<Person> & Pick<Person, 'id'>): Person {
+  return {
+    name: overrides.id,
+    email: null,
+    role: 'Engineer',
+    defaultCapacity: 100,
+    subteamId: null,
+    notes: '',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeAllocation(
+  overrides: Partial<Allocation> & Pick<Allocation, 'id' | 'personId' | 'projectId' | 'role'>,
+): Allocation {
+  return {
+    quarterId: '',
+    startDate: null,
+    endDate: null,
+    percentage: 0,
+    ...overrides,
+  };
+}
+
+let idCounter = 0;
+function nextId() {
+  return `gen-${++idCounter}`;
+}
+
 describe('planAddProjectToQuarter', () => {
-  it('marks DRI, EM, and PM as roles that create an active quarter entry', () => {
-    expect(projectRoleCreatesActiveQuarterEntry('DRI')).toBe(true);
-    expect(projectRoleCreatesActiveQuarterEntry('EM')).toBe(true);
-    expect(projectRoleCreatesActiveQuarterEntry('PM')).toBe(true);
-    expect(projectRoleCreatesActiveQuarterEntry('Engineer')).toBe(false);
-  });
-
-  it('creates a missing quarter project for leadership roles only', () => {
-    expect(planEnsureProjectInQuarter(quarter, [], project, 'DRI', () => 'generated-id')).toMatchObject({
-      id: 'generated-id',
-      quarterId: quarter.id,
-      projectId: project.id,
-      status: project.status,
-      priority: 0,
-    });
-    expect(planEnsureProjectInQuarter(quarter, existingQuarterProjects, project, 'EM', () => 'generated-id')).toMatchObject({
-      priority: 1,
-    });
-    expect(planEnsureProjectInQuarter(quarter, [], project, 'Engineer', () => 'generated-id')).toBeNull();
-    expect(planEnsureProjectInQuarter(null, [], project, 'PM', () => 'generated-id')).toBeNull();
-  });
-
-  it('does not create a duplicate quarter project if the project is already in the active quarter', () => {
-    const currentQuarterProjects: QuarterProject[] = [
-      ...existingQuarterProjects,
+  it('returns null when the project does not exist', () => {
+    const result = planAddProjectToQuarter(
       {
-        id: 'qp-project-1',
-        quarterId: quarter.id,
-        projectId: project.id,
-        status: project.status,
-        priority: 1,
-        estimatedPersonWeeks: null,
-        notes: '',
-        plannedStartWeek: null,
-        plannedEndWeek: null,
-        targetMilestone: null,
+        quarter,
+        quarterProjects: [],
+        quarterPeople: [],
+        projects: [],
+        people: [],
+        allAllocations: [],
       },
-    ];
-
-    expect(planEnsureProjectInQuarter(quarter, currentQuarterProjects, project, 'DRI', () => 'generated-id')).toBeNull();
+      'nonexistent',
+      nextId,
+    );
+    expect(result).toBeNull();
   });
 
-  it('uses template roles and materializes template allocations', () => {
-    const roles: ProjectRole[] = [
-      { id: 'role-template-dri', quarterId: '', projectId: project.id, personId: 'eng-1', role: 'DRI' },
-      { id: 'role-template-pm', quarterId: '', projectId: project.id, personId: 'pm-1', role: 'PM' },
-    ];
-    const allocations: Allocation[] = [
-      { id: 'allocation-template', quarterId: '', personId: 'eng-1', projectId: project.id, weekStart: '', percentage: 60 },
-    ];
+  it('creates a QuarterProject record with the correct quarterId and projectId', () => {
+    const project = makeProject({ id: 'p1' });
+    const result = planAddProjectToQuarter(
+      {
+        quarter,
+        quarterProjects: [],
+        quarterPeople: [],
+        projects: [project],
+        people: [],
+        allAllocations: [],
+      },
+      'p1',
+      nextId,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.quarterProjectToCreate.quarterId).toBe('q1');
+    expect(result!.quarterProjectToCreate.projectId).toBe('p1');
+  });
 
-    let nextId = 1;
-    const plan = planAddProjectToQuarter({
-      quarter,
-      quarterProjects: existingQuarterProjects,
-      quarterPeople: [],
-      projects: [project],
-      people,
-      allProjectRoles: roles,
-      allAllocations: allocations,
-      allQuarters: [quarter, previousQuarter, olderQuarter],
-    }, project.id, () => `generated-${nextId++}`);
-
-    expect(plan).not.toBeNull();
-    expect(plan?.quarterProjectToCreate).toMatchObject({
-      quarterId: quarter.id,
-      projectId: project.id,
-      priority: 1,
+  it('sets priority to the current number of quarter projects', () => {
+    const project = makeProject({ id: 'p1' });
+    const existingQP: QuarterProject = {
+      id: 'qp-existing',
+      quarterId: 'q1',
+      projectId: 'p-other',
       status: 'Active',
-    });
-    expect(plan?.quarterRolesToCreate).toHaveLength(2);
-    expect(plan?.quarterRolesToCreate.map((role) => role.quarterId)).toEqual([quarter.id, quarter.id]);
-    expect(plan?.quarterPeopleToCreate).toEqual([{
-      id: 'generated-3',
-      quarterId: quarter.id,
+      priority: 0,
+      estimatedPersonWeeks: null,
+      notes: '',
+      plannedStartWeek: null,
+      plannedEndWeek: null,
+      targetMilestone: null,
+    };
+    const result = planAddProjectToQuarter(
+      {
+        quarter,
+        quarterProjects: [existingQP],
+        quarterPeople: [],
+        projects: [project],
+        people: [],
+        allAllocations: [],
+      },
+      'p1',
+      nextId,
+    );
+    expect(result!.quarterProjectToCreate.priority).toBe(1);
+  });
+
+  it('uses template allocations (quarterId="") when they exist', () => {
+    const project = makeProject({ id: 'p1', subteamId: 'st1' });
+    const person = makePerson({ id: 'eng-1' });
+    const templateAllocation = makeAllocation({
+      id: 'tmpl-1',
       personId: 'eng-1',
-      subteamId: 'subteam-1',
+      projectId: 'p1',
+      role: 'Engineer',
+      quarterId: '',
+    });
+    const result = planAddProjectToQuarter(
+      {
+        quarter,
+        quarterProjects: [],
+        quarterPeople: [],
+        projects: [project],
+        people: [person],
+        allAllocations: [templateAllocation],
+      },
+      'p1',
+      nextId,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.allocationsToCreate).toHaveLength(1);
+    expect(result!.allocationsToCreate[0].personId).toBe('eng-1');
+    expect(result!.allocationsToCreate[0].quarterId).toBe('q1');
+    expect(result!.allocationsToCreate[0].startDate).toBe(quarter.startDate);
+    expect(result!.allocationsToCreate[0].endDate).toBeNull();
+  });
+
+  it('creates a QuarterPerson entry for people not yet in the quarter', () => {
+    const project = makeProject({ id: 'p1' });
+    const person = makePerson({ id: 'eng-1', defaultCapacity: 80 });
+    const templateAllocation = makeAllocation({
+      id: 'tmpl-1',
+      personId: 'eng-1',
+      projectId: 'p1',
+      role: 'Engineer',
+      quarterId: '',
+    });
+    const result = planAddProjectToQuarter(
+      {
+        quarter,
+        quarterProjects: [],
+        quarterPeople: [],
+        projects: [project],
+        people: [person],
+        allAllocations: [templateAllocation],
+      },
+      'p1',
+      nextId,
+    );
+    expect(result!.quarterPeopleToCreate).toHaveLength(1);
+    expect(result!.quarterPeopleToCreate[0].personId).toBe('eng-1');
+    expect(result!.quarterPeopleToCreate[0].quarterId).toBe('q1');
+    expect(result!.quarterPeopleToCreate[0].quarterCapacity).toBe(80);
+  });
+
+  it('does not create a duplicate QuarterPerson for someone already in the quarter', () => {
+    const project = makeProject({ id: 'p1' });
+    const person = makePerson({ id: 'eng-1' });
+    const existingQP: QuarterPerson = {
+      id: 'qp-eng-1',
+      quarterId: 'q1',
+      personId: 'eng-1',
+      subteamId: null,
       inactive: false,
       quarterCapacity: 100,
       overheadOverride: null,
-    }]);
-    expect(plan?.allocationPlans).toHaveLength(1);
-    expect(plan?.allocationPlans[0]?.percentage).toBe(60);
-    expect(plan?.allocationPlans[0]?.allocationsToUpsert).toHaveLength(14);
+    };
+    const templateAllocation = makeAllocation({
+      id: 'tmpl-1',
+      personId: 'eng-1',
+      projectId: 'p1',
+      role: 'Engineer',
+      quarterId: '',
+    });
+    const result = planAddProjectToQuarter(
+      {
+        quarter,
+        quarterProjects: [],
+        quarterPeople: [existingQP],
+        projects: [project],
+        people: [person],
+        allAllocations: [templateAllocation],
+      },
+      'p1',
+      nextId,
+    );
+    expect(result!.quarterPeopleToCreate).toHaveLength(0);
   });
 
-  it('does not create duplicate quarter people for existing members', () => {
-    const roles: ProjectRole[] = [
-      { id: 'role-template-dri', quarterId: '', projectId: project.id, personId: 'eng-1', role: 'DRI' },
-    ];
-
-    const plan = planAddProjectToQuarter({
-      quarter,
-      quarterProjects: existingQuarterProjects,
-      quarterPeople: [makeQuarterPerson('eng-1')],
-      projects: [project],
-      people,
-      allProjectRoles: roles,
-      allAllocations: [],
-      allQuarters: [quarter, previousQuarter],
-    }, project.id, () => 'generated-id');
-
-    expect(plan?.quarterPeopleToCreate).toEqual([]);
+  it('produces no allocations or quarter people when there are no template or sibling allocations', () => {
+    const project = makeProject({ id: 'p1', subteamId: null });
+    const result = planAddProjectToQuarter(
+      {
+        quarter,
+        quarterProjects: [],
+        quarterPeople: [],
+        projects: [project],
+        people: [],
+        allAllocations: [],
+      },
+      'p1',
+      nextId,
+    );
+    expect(result!.allocationsToCreate).toHaveLength(0);
+    expect(result!.quarterPeopleToCreate).toHaveLength(0);
   });
 
-  it('falls back to the latest previous quarter non-engineer roles when no templates exist', () => {
-    const roles: ProjectRole[] = [
-      { id: 'role-old-em', quarterId: olderQuarter.id, projectId: project.id, personId: 'pm-1', role: 'PM' },
-      { id: 'role-prev-pm', quarterId: previousQuarter.id, projectId: project.id, personId: 'pm-1', role: 'PM' },
-      { id: 'role-prev-eng', quarterId: previousQuarter.id, projectId: project.id, personId: 'eng-1', role: 'Engineer' },
-    ];
-
-    let nextId = 1;
-    const plan = planAddProjectToQuarter({
-      quarter,
-      quarterProjects: [],
-      quarterPeople: [],
-      projects: [project],
-      people,
-      allProjectRoles: roles,
-      allAllocations: [],
-      allQuarters: [quarter, previousQuarter, olderQuarter],
-    }, project.id, () => `generated-${nextId++}`);
-
-    expect(plan?.quarterRolesToCreate).toEqual([{
-      id: 'generated-1',
-      quarterId: quarter.id,
-      projectId: project.id,
-      personId: 'pm-1',
-      role: 'PM',
-    }]);
-    expect(plan?.quarterPeopleToCreate).toEqual([]);
-    expect(plan?.allocationPlans).toEqual([]);
-  });
-
-  it('returns null when the project is missing', () => {
-    const plan = planAddProjectToQuarter({
-      quarter,
-      quarterProjects: [],
-      quarterPeople: [],
-      projects: [],
-      people,
-      allProjectRoles: [],
-      allAllocations: [],
-      allQuarters: [quarter],
-    }, 'missing-project', () => 'generated-id');
-
-    expect(plan).toBeNull();
+  it('syncs from sibling project roster when no template allocations exist', () => {
+    const siblingProject = makeProject({ id: 'sibling', subteamId: 'st1' });
+    const newProject = makeProject({ id: 'new-p', subteamId: 'st1' });
+    const person = makePerson({ id: 'eng-1' });
+    // Active allocation on sibling project in the quarter
+    const siblingAllocation = makeAllocation({
+      id: 'sib-alloc',
+      personId: 'eng-1',
+      projectId: 'sibling',
+      role: 'Engineer',
+      quarterId: 'q1',
+    });
+    const result = planAddProjectToQuarter(
+      {
+        quarter,
+        quarterProjects: [],
+        quarterPeople: [],
+        projects: [siblingProject, newProject],
+        people: [person],
+        allAllocations: [siblingAllocation],
+      },
+      'new-p',
+      nextId,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.allocationsToCreate.some((a) => a.personId === 'eng-1' && a.projectId === 'new-p')).toBe(true);
   });
 });

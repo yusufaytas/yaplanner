@@ -2,30 +2,18 @@
 
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
-import { db } from '@/lib/db';
 import { seedSampleData } from '@/lib/seed';
 import { ProjectCard } from '@/components/projects/ProjectCard';
 import { PersonCard } from '@/components/people/PersonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { splitLeadershipPeople } from '@/lib/people-directory';
+import { splitLeadershipPeople } from '@/lib/people';
 import { buildProjectLeadershipMaps } from '@/lib/project-directory';
-import { buildProjectHealthMap } from '@/lib/project-health';
-import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
+import { buildProjectHealthMap, getOverAllocatedProjectIds } from '@/lib/project-health';
+import { getActiveQuarter } from '@/lib/quarters';
+import { getHomePageData } from '@/lib/projects';
 
 export default function HomePage() {
-  const data = useLiveQuery(async () => {
-    const [people, subteams, projects, quarters, projectRoles, unknowns, risks] =
-      await Promise.all([
-        db.people.toArray(),
-        db.subteams.toArray(),
-        db.projects.where('status').equals('Active').toArray(),
-        listResolvedQuarters(),
-        db.projectRoles.toArray(),
-        db.unknowns.toArray(),
-        db.risks.toArray(),
-      ]);
-    return { people, subteams, projects, quarters, projectRoles, unknowns, risks };
-  });
+  const data = useLiveQuery(() => getHomePageData());
 
   if (!data) {
     return (
@@ -35,13 +23,15 @@ export default function HomePage() {
     );
   }
 
-  const { people, subteams, projects, quarters, projectRoles, unknowns, risks } = data;
+  const { people, subteams, projects, quarters, allocations, quarterPeople } = data;
   const activeQuarter = getActiveQuarter(quarters);
+  const overAllocatedProjectIds = activeQuarter
+    ? getOverAllocatedProjectIds({ quarter: activeQuarter, people, quarterPeople, allocations })
+    : undefined;
 
   const personById = new Map(people.map((p) => [p.id, p]));
-  const subteamById = new Map(subteams.map((s) => [s.id, s]));
-  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projectRoles, activeQuarter?.id ?? null);
-  const healthByProject = buildProjectHealthMap(projects, unknowns, risks);
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, allocations, activeQuarter?.id ?? null);
+  const healthByProject = buildProjectHealthMap(projects, undefined, undefined, overAllocatedProjectIds);
   const { ems, pms } = splitLeadershipPeople(people);
   const isEmpty = people.length === 0 && projects.length === 0;
 
@@ -141,10 +131,9 @@ export default function HomePage() {
                       </h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                         {items.map((person) => {
-                          const subteam = person.subteamId ? subteamById.get(person.subteamId) : null;
                           return (
                             <Link key={person.id} href={`/people/${person.id}`}>
-                              <PersonCard person={person} subteamName={subteam?.name} />
+                              <PersonCard person={person} />
                             </Link>
                           );
                         })}
