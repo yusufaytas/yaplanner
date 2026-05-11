@@ -5,8 +5,7 @@ import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
 import { db } from '@/lib/db';
-import { getQuarterPersonAvailableWeeks } from '@/lib/quarter-capacity';
-import { getPersonProjectCapacityShares, personNeedsProjectCapacity } from '@/lib/project-team';
+import { getQuarterPeopleLists, getQuarterPersonProjectSummary } from '@/lib/quarter-people';
 
 function uid() { return crypto.randomUUID(); }
 
@@ -31,14 +30,8 @@ export default function QuarterPeopleClient() {
 
   const { quarter, people, subteams, quarterPeople, projectRoles, allocations } = data;
   const subteamById = new Map(subteams.map((s) => [s.id, s]));
-  const quarterPersonByPersonId = new Map(quarterPeople.map((qp) => [qp.personId, qp]));
-
-  const inQuarter = people.filter((p) => quarterPersonByPersonId.has(p.id));
-  const notInQuarter = people.filter((p) => !quarterPersonByPersonId.has(p.id) && personNeedsProjectCapacity(p.role));
-
-  const filteredNotInQuarter = search.trim()
-    ? notInQuarter.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
-    : notInQuarter;
+  const { inQuarter, sortedInQuarter: sorted, notInQuarter, filteredNotInQuarter, quarterPersonByPersonId } =
+    getQuarterPeopleLists(people, quarterPeople, search);
 
   async function addToQuarter(personId: string) {
     await db.quarterPeople.add({
@@ -62,10 +55,6 @@ export default function QuarterPeopleClient() {
     if (qp) await db.quarterPeople.update(qp.id, { inactive: !qp.inactive });
   }
 
-  const sorted = [...inQuarter]
-    .filter((p) => personNeedsProjectCapacity(p.role))
-    .sort((a, b) => a.name.localeCompare(b.name));
-
   return (
     <div className="space-y-6">
 
@@ -84,29 +73,15 @@ export default function QuarterPeopleClient() {
           <div className="divide-y divide-white/5">
             {sorted.map((person) => {
               const qp = quarterPersonByPersonId.get(person.id)!;
-              const availableWeeks = getQuarterPersonAvailableWeeks(quarter, person, qp);
+              const summary = getQuarterPersonProjectSummary(quarter, person, qp, projectRoles, allocations);
               const subteam = subteamById.get(qp.subteamId ?? person.subteamId ?? '');
-
-              // Allocated person-weeks across all projects this quarter
-              const tracksCapacity = personNeedsProjectCapacity(person.role);
-              const assignedProjectIds = projectRoles
-                .filter((r) => r.personId === person.id)
-                .map((r) => r.projectId);
-              const personAllocations = allocations.filter((a) => a.personId === person.id);
-              const shares = tracksCapacity
-                ? getPersonProjectCapacityShares(person.id, person.defaultCapacity, assignedProjectIds, projectRoles, personAllocations)
-                : [];
-              const totalAllocatedPct = shares.reduce((sum, s) => sum + s.percentage, 0);
-              const allocatedWeeks = Number(((availableWeeks * totalAllocatedPct) / 100).toFixed(1));
-              const remainingWeeks = Number((availableWeeks - allocatedWeeks).toFixed(1));
-              const overAllocated = remainingWeeks < 0;
               return (
                 <div key={person.id} className={`flex items-center gap-3 py-2.5 first:pt-0 last:pb-0 ${qp.inactive ? 'opacity-40' : ''}`}>
                   {/* capacity bar */}
                   <div className="shrink-0 w-0.5 h-8 rounded-full bg-white/10 overflow-hidden">
                     <div
                       className="w-full rounded-full bg-sky-400 transition-all"
-                      style={{ height: `${Math.min(100, availableWeeks * 8)}%`, marginTop: `${100 - Math.min(100, availableWeeks * 8)}%` }}
+                      style={{ height: `${Math.min(100, summary.availableWeeks * 8)}%`, marginTop: `${100 - Math.min(100, summary.availableWeeks * 8)}%` }}
                     />
                   </div>
 
@@ -123,12 +98,12 @@ export default function QuarterPeopleClient() {
                   <div className="shrink-0 flex items-center gap-4 text-xs tabular-nums">
                     {qp.inactive ? (
                       <span className="text-zinc-600">inactive</span>
-                    ) : tracksCapacity ? (
+                    ) : summary.tracksCapacity ? (
                       <>
-                        <span className="text-zinc-500" title="Available person-weeks">{availableWeeks} Estimated</span>
-                        <span className="text-zinc-400" title="Allocated person-weeks">{allocatedWeeks} Allocated</span>
-                        <span className={overAllocated ? 'text-rose-400 font-medium' : 'text-emerald-400'} title="Remaining person-weeks">
-                          {overAllocated ? '' : '+'}{remainingWeeks} rem
+                        <span className="text-zinc-500" title="Available person-weeks">{summary.availableWeeks} Estimated</span>
+                        <span className="text-zinc-400" title="Allocated person-weeks">{summary.allocatedWeeks} Allocated</span>
+                        <span className={summary.overAllocated ? 'text-rose-400 font-medium' : 'text-emerald-400'} title="Remaining person-weeks">
+                          {summary.overAllocated ? '' : '+'}{summary.remainingWeeks} rem
                         </span>
                       </>
                     ) : (

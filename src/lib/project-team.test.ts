@@ -8,8 +8,11 @@ import {
   getPersonProjectCapacityShares,
   getProjectRoleOptions,
   getProjectReservedCapacity,
+  materializeTemplateAllocationsForQuarter,
   personMatchesProjectRole,
   personNeedsProjectCapacity,
+  projectRoleNeedsCapacity,
+  planProjectAllocationTemplate,
   planQuarterProjectAllocation,
   planAddProjectRole,
   planProjectRolePersonChange,
@@ -24,6 +27,7 @@ function buildContext(overrides: Partial<ProjectTeamContext> = {}): ProjectTeamC
     name: 'Platform Infra Hardening',
     description: '',
     status: 'Active',
+    tags: [],
     owningSubteamId: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     archivedAt: null,
@@ -141,6 +145,9 @@ describe('project team rules', () => {
     expect(personNeedsProjectCapacity('Engineer')).toBe(true);
     expect(personNeedsProjectCapacity('EM')).toBe(false);
     expect(personNeedsProjectCapacity('PM')).toBe(false);
+    expect(projectRoleNeedsCapacity('DRI')).toBe(true);
+    expect(projectRoleNeedsCapacity('Engineer')).toBe(true);
+    expect(projectRoleNeedsCapacity('PM')).toBe(false);
   });
 
   it('returns editable role options while preserving the current role', () => {
@@ -254,6 +261,7 @@ describe('project team rules', () => {
     });
     expect(plan.projectPatch).toEqual({ owningSubteamId: 'generated-id' });
     expect(plan.peopleUpdates).toEqual([{ personId: 'eng-1', subteamId: 'generated-id' }]);
+    expect(plan.quarterPeopleToCreate).toEqual([]);
     expect(plan.quarterPeopleUpdates).toEqual([{ quarterPersonId: 'qp-eng-1', subteamId: 'generated-id' }]);
   });
 
@@ -302,7 +310,33 @@ describe('project team rules', () => {
 
     expect(plan.subteamToCreate).toBeUndefined();
     expect(plan.peopleUpdates).toEqual([{ personId: 'eng-2', subteamId: 'subteam-1' }]);
+    expect(plan.quarterPeopleToCreate).toEqual([]);
     expect(plan.quarterPeopleUpdates).toEqual([{ quarterPersonId: 'qp-eng-2', subteamId: 'subteam-1' }]);
+  });
+
+  it('creates a quarter membership when assigning an engineer not yet in the quarter', () => {
+    const context = buildContext({
+      quarterPeople: [],
+      project: { ...buildContext().project, owningSubteamId: 'subteam-1' },
+      projectRoles: [
+        { id: 'role-dri', quarterId: 'quarter-1', projectId: 'project-1', personId: 'eng-1', role: 'DRI' },
+      ],
+    });
+
+    const plan = planAddProjectRole(context, 'Engineer', 'eng-2', deps);
+    if (typeof plan === 'string') throw new Error(plan);
+
+    expect(plan.peopleUpdates).toEqual([{ personId: 'eng-2', subteamId: 'subteam-1' }]);
+    expect(plan.quarterPeopleToCreate).toEqual([{
+      id: 'generated-id',
+      quarterId: 'quarter-1',
+      personId: 'eng-2',
+      subteamId: 'subteam-1',
+      inactive: false,
+      quarterCapacity: 100,
+      overheadOverride: null,
+    }]);
+    expect(plan.quarterPeopleUpdates).toEqual([]);
   });
 
   it('converting an existing role to DRI creates the project subteam', () => {
@@ -342,6 +376,7 @@ describe('project team rules', () => {
     expect(plan.roleUpdate).toEqual({ roleId: 'role-dri', patch: { personId: 'eng-2' } });
     expect(plan.subteamToUpdate).toEqual({ id: 'subteam-1', patch: { driPersonId: 'eng-2' } });
     expect(plan.peopleUpdates).toEqual([{ personId: 'eng-2', subteamId: 'subteam-1' }]);
+    expect(plan.quarterPeopleToCreate).toEqual([]);
   });
 
   it('blocks changing a role to a person already assigned on the project', () => {
@@ -399,5 +434,128 @@ describe('project team rules', () => {
 
     expect(plan.percentage).toBe(50);
     expect(plan.allocationsToUpsert[0]?.percentage).toBe(50);
+  });
+
+  it('stores a template allocation when no quarter is active', () => {
+    const plan = planProjectAllocationTemplate('eng-1', 'project-1', 20, [], [], deps.createId);
+
+    expect(plan.allocationsToDelete).toEqual([]);
+    expect(plan.percentage).toBe(20);
+    expect(plan.allocationsToUpsert).toEqual([{
+      id: 'generated-id',
+      quarterId: '',
+      personId: 'eng-1',
+      projectId: 'project-1',
+      weekStart: '',
+      percentage: 20,
+    }]);
+  });
+
+  it('reuses the existing template allocation and deletes duplicates', () => {
+    const existingAllocations: Allocation[] = [
+      { id: 'template-1', quarterId: '', personId: 'eng-1', projectId: 'project-1', weekStart: '', percentage: 10 },
+      { id: 'template-2', quarterId: '', personId: 'eng-1', projectId: 'project-1', weekStart: 'stale', percentage: 15 },
+    ];
+
+    const plan = planProjectAllocationTemplate('eng-1', 'project-1', 30, [], existingAllocations, deps.createId);
+
+    expect(plan.allocationsToDelete).toEqual(['template-2']);
+    expect(plan.allocationsToUpsert).toEqual([{
+      id: 'template-1',
+      quarterId: '',
+      personId: 'eng-1',
+      projectId: 'project-1',
+      weekStart: '',
+      percentage: 30,
+    }]);
+  });
+
+  it('clamps DRI template allocations to at least 50 percent', () => {
+    const roles: ProjectRole[] = [
+      { id: 'role-1', quarterId: '', projectId: 'project-1', personId: 'eng-1', role: 'DRI' },
+    ];
+
+    const plan = planProjectAllocationTemplate('eng-1', 'project-1', 20, roles, [], deps.createId);
+
+    expect(plan.percentage).toBe(50);
+    expect(plan.allocationsToUpsert[0]?.percentage).toBe(50);
+  });
+
+  it('materializes template allocations into quarter weeks', () => {
+    const templateRoles: ProjectRole[] = [
+      { id: 'role-1', quarterId: 'quarter-1', projectId: 'project-1', personId: 'eng-1', role: 'Engineer' },
+    ];
+    const templateAllocations: Allocation[] = [{
+      id: 'template-1',
+      quarterId: '',
+      personId: 'eng-1',
+      projectId: 'project-1',
+      weekStart: '',
+      percentage: 35,
+    }];
+
+    const plans = materializeTemplateAllocationsForQuarter(
+      activeQuarter,
+      'project-1',
+      templateRoles,
+      templateAllocations,
+      deps.createId,
+    );
+
+    expect(plans).toHaveLength(1);
+    expect(plans[0]?.percentage).toBe(35);
+    expect(plans[0]?.allocationsToUpsert).toHaveLength(14);
+    expect(plans[0]?.allocationsToUpsert[0]).toMatchObject({
+      quarterId: 'quarter-1',
+      personId: 'eng-1',
+      projectId: 'project-1',
+      percentage: 35,
+    });
+  });
+
+  it('materializes DRI template allocations and ignores non-capacity roles', () => {
+    const templateRoles: ProjectRole[] = [
+      { id: 'role-1', quarterId: 'quarter-1', projectId: 'project-1', personId: 'eng-1', role: 'DRI' },
+      { id: 'role-2', quarterId: 'quarter-1', projectId: 'project-1', personId: 'pm-1', role: 'PM' },
+    ];
+    const templateAllocations: Allocation[] = [
+      { id: 'template-1', quarterId: '', personId: 'eng-1', projectId: 'project-1', weekStart: '', percentage: 60 },
+      { id: 'template-2', quarterId: '', personId: 'pm-1', projectId: 'project-1', weekStart: '', percentage: 40 },
+    ];
+
+    const plans = materializeTemplateAllocationsForQuarter(
+      activeQuarter,
+      'project-1',
+      templateRoles,
+      templateAllocations,
+      deps.createId,
+    );
+
+    expect(plans).toHaveLength(1);
+    expect(plans[0]?.percentage).toBe(60);
+    expect(plans[0]?.allocationsToUpsert[0]).toMatchObject({
+      personId: 'eng-1',
+      projectId: 'project-1',
+      percentage: 60,
+    });
+  });
+
+  it('only materializes template allocations for the selected project', () => {
+    const templateRoles: ProjectRole[] = [
+      { id: 'role-1', quarterId: 'quarter-1', projectId: 'project-1', personId: 'eng-1', role: 'Engineer' },
+    ];
+    const templateAllocations: Allocation[] = [
+      { id: 'template-1', quarterId: '', personId: 'eng-1', projectId: 'project-2', weekStart: '', percentage: 25 },
+    ];
+
+    const plans = materializeTemplateAllocationsForQuarter(
+      activeQuarter,
+      'project-1',
+      templateRoles,
+      templateAllocations,
+      deps.createId,
+    );
+
+    expect(plans).toEqual([]);
   });
 });

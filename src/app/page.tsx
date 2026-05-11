@@ -7,7 +7,10 @@ import { seedSampleData } from '@/lib/seed';
 import { ProjectCard } from '@/components/projects/ProjectCard';
 import { PersonCard } from '@/components/people/PersonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { computeProjectHealth } from '@/lib/project-health';
+import { splitLeadershipPeople } from '@/lib/people-directory';
+import { buildProjectLeadershipMaps } from '@/lib/project-directory';
+import { buildProjectHealthMap } from '@/lib/project-health';
+import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
 
 export default function HomePage() {
   const data = useLiveQuery(async () => {
@@ -16,7 +19,7 @@ export default function HomePage() {
         db.people.toArray(),
         db.subteams.toArray(),
         db.projects.where('status').equals('Active').toArray(),
-        db.quarters.where('status').equals('active').toArray(),
+        listResolvedQuarters(),
         db.projectRoles.toArray(),
         db.unknowns.toArray(),
         db.risks.toArray(),
@@ -33,23 +36,13 @@ export default function HomePage() {
   }
 
   const { people, subteams, projects, quarters, projectRoles, unknowns, risks } = data;
-  const activeQuarter = quarters[0] ?? null;
+  const activeQuarter = getActiveQuarter(quarters);
 
   const personById = new Map(people.map((p) => [p.id, p]));
   const subteamById = new Map(subteams.map((s) => [s.id, s]));
-
-  const driByProject = new Map<string, string>();
-  const emByProject  = new Map<string, string>();
-  const pmByProject  = new Map<string, string>();
-  for (const role of projectRoles) {
-    if (activeQuarter && role.quarterId !== activeQuarter.id) continue;
-    if (role.role === 'DRI' && !driByProject.has(role.projectId)) driByProject.set(role.projectId, role.personId);
-    if (role.role === 'EM'  && !emByProject.has(role.projectId))  emByProject.set(role.projectId, role.personId);
-    if (role.role === 'PM'  && !pmByProject.has(role.projectId))  pmByProject.set(role.projectId, role.personId);
-  }
-
-  const ems = people.filter((p) => p.role === 'EM');
-  const pms = people.filter((p) => p.role === 'PM');
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projectRoles, activeQuarter?.id ?? null);
+  const healthByProject = buildProjectHealthMap(projects, unknowns, risks);
+  const { ems, pms } = splitLeadershipPeople(people);
   const isEmpty = people.length === 0 && projects.length === 0;
 
   return (
@@ -113,15 +106,12 @@ export default function HomePage() {
                 {projects.map((project) => {
                   return (
                     <Link key={project.id} href={`/projects/${project.id}`}>
-                      <ProjectCard
-                        project={project}
-                        dri={driByProject.get(project.id) ? personById.get(driByProject.get(project.id)!) : null}
-                        em={emByProject.get(project.id)   ? personById.get(emByProject.get(project.id)!)  : null}
-                        pm={pmByProject.get(project.id)   ? personById.get(pmByProject.get(project.id)!)  : null}
-                        health={computeProjectHealth(
-                          unknowns.filter((u) => u.projectId === project.id),
-                          risks.filter((r) => r.projectId === project.id),
-                        )}
+                        <ProjectCard
+                          project={project}
+                          dri={driByProject.get(project.id) ? personById.get(driByProject.get(project.id)!) : null}
+                          em={emByProject.get(project.id)   ? personById.get(emByProject.get(project.id)!)  : null}
+                          pm={pmByProject.get(project.id)   ? personById.get(pmByProject.get(project.id)!)  : null}
+                          health={healthByProject.get(project.id)}
                       />
                     </Link>
                   );

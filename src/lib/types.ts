@@ -32,6 +32,7 @@ export interface Project {
   name: string;
   description: string;
   status: ProjectStatus;
+  tags: string[];
   owningSubteamId: string | null;
   createdAt: string;
   archivedAt: string | null;

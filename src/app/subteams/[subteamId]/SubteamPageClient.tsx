@@ -8,7 +8,10 @@ import { db } from '@/lib/db';
 import { PersonCard } from '@/components/people/PersonCard';
 import { ProjectCard } from '@/components/projects/ProjectCard';
 import { InlineEditText, InlineEditSelect } from '@/components/ui/InlineEdit';
-import { computeProjectHealth } from '@/lib/project-health';
+import { buildProjectLeadershipMaps } from '@/lib/project-directory';
+import { buildProjectHealthMap } from '@/lib/project-health';
+import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
+import { getSubteamMemberCollections, getSubteamProjectCollections } from '@/lib/subteam-directory';
 
 export default function SubteamPageClient() {
   const { subteamId } = useParams<{ subteamId: string }>();
@@ -16,37 +19,30 @@ export default function SubteamPageClient() {
   const [newMemberId, setNewMemberId] = useState('');
 
   const data = useLiveQuery(async () => {
-    const [subteam, members, allPeople, quarters, projects, projectRoles, unknowns, risks] =
+    const [subteam, allPeople, quarters, projects, projectRoles, unknowns, risks] =
       await Promise.all([
         db.subteams.get(subteamId),
-        db.people.where('subteamId').equals(subteamId).toArray(),
         db.people.orderBy('name').toArray(),
-        db.quarters.where('status').equals('active').toArray(),
+        listResolvedQuarters(),
         db.projects.toArray(),
         db.projectRoles.toArray(),
         db.unknowns.toArray(),
         db.risks.toArray(),
       ]);
-    return { subteam, members, allPeople, quarters, projects, projectRoles, unknowns, risks };
+    return { subteam, allPeople, quarters, projects, projectRoles, unknowns, risks };
   }, [subteamId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
   if (!data.subteam) return <div className="text-sm text-zinc-400">Subteam not found.</div>;
 
-  const { subteam, members, allPeople, quarters, projects, projectRoles, unknowns, risks } = data;
-  const engineerMembers = members.filter((person) => person.role === 'Engineer');
-  const engineers = allPeople.filter((person) => person.role === 'Engineer');
-  const activeQuarter = quarters[0] ?? null;
+  const { subteam, allPeople, quarters, projects, projectRoles, unknowns, risks } = data;
+  const activeQuarter = getActiveQuarter(quarters);
+  const { engineerMembers, nonMembers, memberIds } = getSubteamMemberCollections(allPeople, subteamId);
 
   const save = (patch: Parameters<typeof db.subteams.update>[1]) =>
     db.subteams.update(subteamId, patch);
 
-  const projectById = new Map(projects.map((p) => [p.id, p]));
   const personById = new Map(allPeople.map((p) => [p.id, p]));
-  const memberIds = new Set(engineerMembers.map((m) => m.id));
-
-  // People not yet in this subteam
-  const nonMembers = engineers.filter((p) => p.subteamId !== subteamId);
 
   async function addMember() {
     if (!newMemberId) return;
@@ -60,30 +56,16 @@ export default function SubteamPageClient() {
     await db.people.update(personId, { subteamId: null });
   }
 
-  // Projects owned by this subteam
-  const ownedProjects = projects.filter((p) => p.owningSubteamId === subteamId);
+  const { ownedProjects, contributingProjects } = getSubteamProjectCollections(
+    projects,
+    projectRoles,
+    activeQuarter?.id ?? null,
+    memberIds,
+    subteamId,
+  );
 
-  // Projects where any member has a role in the active quarter (not owned)
-  const memberRolesThisQuarter = activeQuarter
-    ? projectRoles.filter((r) => r.quarterId === activeQuarter.id && memberIds.has(r.personId))
-    : [];
-  const ownedIds = new Set(ownedProjects.map((p) => p.id));
-  const involvedProjectIds = new Set(memberRolesThisQuarter.map((r) => r.projectId));
-  const contributingProjects = [...involvedProjectIds]
-    .filter((pid) => !ownedIds.has(pid))
-    .map((pid) => projectById.get(pid))
-    .filter(Boolean) as typeof projects;
-
-  // DRI, EM, PM per project
-  const driByProject = new Map<string, string>();
-  const emByProject  = new Map<string, string>();
-  const pmByProject  = new Map<string, string>();
-  for (const r of projectRoles) {
-    if (activeQuarter && r.quarterId !== activeQuarter.id) continue;
-    if (r.role === 'DRI' && !driByProject.has(r.projectId)) driByProject.set(r.projectId, r.personId);
-    if (r.role === 'EM'  && !emByProject.has(r.projectId))  emByProject.set(r.projectId, r.personId);
-    if (r.role === 'PM'  && !pmByProject.has(r.projectId))  pmByProject.set(r.projectId, r.personId);
-  }
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projectRoles, activeQuarter?.id ?? null);
+  const healthByProject = buildProjectHealthMap(projects, unknowns, risks);
 
   // Remove owned project assignment
   async function removeOwnedProject(projectId: string) {
@@ -190,7 +172,7 @@ export default function SubteamPageClient() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {engineerMembers.map((person) => (
-              <div key={person.id} className="group relative">
+              <div key={person.id} className="flex flex-col gap-1">
                 <Link href={`/people/${person.id}`}>
                   <PersonCard
                     person={person}
@@ -199,9 +181,10 @@ export default function SubteamPageClient() {
                 </Link>
                 <button
                   onClick={() => removeMember(person.id)}
-                  className="absolute top-2 right-2 hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-zinc-500 hover:bg-rose-900/60 hover:text-rose-400 text-xs"
-                  title={subteam.driPersonId === person.id ? 'Choose another DRI before removing this member' : 'Remove from subteam'}
-                >✕</button>
+                  className="px-1 text-left text-xs text-zinc-600 hover:text-rose-400"
+                >
+                  {subteam.driPersonId === person.id ? 'Choose another DRI before removing this member' : 'Remove from subteam'}
+                </button>
               </div>
             ))}
           </div>
@@ -226,10 +209,7 @@ export default function SubteamPageClient() {
                       dri={driByProject.get(project.id) ? personById.get(driByProject.get(project.id)!) : null}
                       em={emByProject.get(project.id)   ? personById.get(emByProject.get(project.id)!)  : null}
                       pm={pmByProject.get(project.id)   ? personById.get(pmByProject.get(project.id)!)  : null}
-                      health={computeProjectHealth(
-                        unknowns.filter((u) => u.projectId === project.id),
-                        risks.filter((r) => r.projectId === project.id),
-                      )}
+                      health={healthByProject.get(project.id)}
                     />
                   </Link>
                   <button
@@ -262,10 +242,7 @@ export default function SubteamPageClient() {
                       dri={driByProject.get(project.id) ? personById.get(driByProject.get(project.id)!) : null}
                       em={emByProject.get(project.id)   ? personById.get(emByProject.get(project.id)!)  : null}
                       pm={pmByProject.get(project.id)   ? personById.get(pmByProject.get(project.id)!)  : null}
-                      health={computeProjectHealth(
-                        unknowns.filter((u) => u.projectId === project.id),
-                        risks.filter((r) => r.projectId === project.id),
-                      )}
+                      health={healthByProject.get(project.id)}
                     />
                   </Link>
                   <button

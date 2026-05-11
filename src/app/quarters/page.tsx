@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { QuarterStatus } from '@/lib/types';
 import { DEFAULT_OVERHEAD_ITEMS } from '@/lib/types';
+import { listResolvedQuarters, suggestNextQuarter, updateQuarterDraftEndDate, updateQuarterDraftStartDate } from '@/lib/quarters';
 
 const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'warning' | 'neutral'> = {
   active: 'success',
@@ -18,41 +19,16 @@ const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'warning' | 'neu
 
 function uid() { return crypto.randomUUID(); }
 
-/** Given the most recent quarter, suggest name and dates for the next one. */
-function suggestNextQuarter(last: { name: string; startDate: string; endDate: string }) {
-  // Compute start: day after last quarter's end
-  const lastEnd = new Date(last.endDate);
-  const nextStart = new Date(lastEnd);
-  nextStart.setUTCDate(nextStart.getUTCDate() + 1);
-
-  // Compute end: same duration as last quarter
-  const lastStart = new Date(last.startDate);
-  const durationMs = lastEnd.getTime() - lastStart.getTime();
-  const nextEnd = new Date(nextStart.getTime() + durationMs);
-
-  const toISO = (d: Date) => d.toISOString().slice(0, 10);
-
-  // Suggest name: increment YYYY-QN if it matches, otherwise leave blank
-  const match = last.name.match(/^(\d{4})-Q([1-4])$/);
-  let nextName = '';
-  if (match) {
-    const year = parseInt(match[1], 10);
-    const q = parseInt(match[2], 10);
-    nextName = q === 4 ? `${year + 1}-Q1` : `${year}-Q${q + 1}`;
-  }
-
-  return { name: nextName, startDate: toISO(nextStart), endDate: toISO(nextEnd) };
-}
-
 export default function QuartersPage() {
   const quarters = useLiveQuery(() =>
-    db.quarters.orderBy('startDate').reverse().toArray(),
+    listResolvedQuarters().then((allQuarters) => allQuarters.sort((a, b) => b.startDate.localeCompare(a.startDate))),
   );
 
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [endDateManuallyEdited, setEndDateManuallyEdited] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function createQuarter() {
@@ -74,6 +50,7 @@ export default function QuartersPage() {
       setName('');
       setStartDate('');
       setEndDate('');
+      setEndDateManuallyEdited(false);
     } finally {
       setSaving(false);
     }
@@ -84,6 +61,7 @@ export default function QuartersPage() {
     setName('');
     setStartDate('');
     setEndDate('');
+    setEndDateManuallyEdited(false);
   }
 
   if (!quarters) return <div className="text-sm text-zinc-500">Loading…</div>;
@@ -102,6 +80,7 @@ export default function QuartersPage() {
                 setName(suggestion.name);
                 setStartDate(suggestion.startDate);
                 setEndDate(suggestion.endDate);
+                setEndDateManuallyEdited(false);
               }
               setAdding(true);
             }}
@@ -127,7 +106,15 @@ export default function QuartersPage() {
             <input
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => {
+                const nextDraft = updateQuarterDraftStartDate(
+                  { startDate, endDate, endDateManuallyEdited },
+                  e.target.value,
+                );
+                setStartDate(nextDraft.startDate);
+                setEndDate(nextDraft.endDate);
+                setEndDateManuallyEdited(nextDraft.endDateManuallyEdited);
+              }}
               className={inputCls}
             />
           </div>
@@ -136,7 +123,15 @@ export default function QuartersPage() {
             <input
               type="date"
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(e) => {
+                const nextDraft = updateQuarterDraftEndDate(
+                  { startDate, endDate, endDateManuallyEdited },
+                  e.target.value,
+                );
+                setStartDate(nextDraft.startDate);
+                setEndDate(nextDraft.endDate);
+                setEndDateManuallyEdited(nextDraft.endDateManuallyEdited);
+              }}
               className={inputCls}
             />
           </div>

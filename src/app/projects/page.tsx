@@ -1,23 +1,29 @@
 'use client';
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useState } from 'react';
+import { useDeferredValue, useState } from 'react';
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { ProjectCard } from '@/components/projects/ProjectCard';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { computeProjectHealth } from '@/lib/project-health';
+import { buildProjectLeadershipMaps, splitProjectsByStatus } from '@/lib/project-directory';
+import { buildProjectHealthMap } from '@/lib/project-health';
+import { filterProjectsByTags, filterTagOptions, listProjectTags, normalizeProjectTag } from '@/lib/project-tags';
+import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
 import type { ProjectStatus } from '@/lib/types';
 
 function uid() { return crypto.randomUUID(); }
 
-const ACTIVE_STATUSES = new Set<ProjectStatus>(['Proposed', 'Active', 'On Hold']);
-const ARCHIVED_STATUSES = new Set<ProjectStatus>(['Complete', 'Cancelled']);
+const COLLAPSED_TAG_LIMIT = 12;
 
 export default function ProjectsPage() {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [status, setStatus] = useState<ProjectStatus>('Proposed');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagQuery, setTagQuery] = useState('');
+  const deferredTagQuery = useDeferredValue(tagQuery);
+  const [showAllTags, setShowAllTags] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
   const data = useLiveQuery(async () => {
@@ -25,7 +31,7 @@ export default function ProjectsPage() {
       db.projects.orderBy('name').toArray(),
       db.people.toArray(),
       db.projectRoles.toArray(),
-      db.quarters.where('status').equals('active').toArray(),
+      listResolvedQuarters(),
       db.unknowns.toArray(),
       db.risks.toArray(),
     ]);
@@ -36,35 +42,36 @@ export default function ProjectsPage() {
 
   const { projects, people, projectRoles, quarters, unknowns, risks } = data;
   const personById = new Map(people.map((p) => [p.id, p]));
-  const activeQuarterId = quarters[0]?.id;
-
-  const driByProject = new Map<string, string>();
-  const emByProject = new Map<string, string>();
-  const pmByProject = new Map<string, string>();
-  for (const role of projectRoles) {
-    if (activeQuarterId && role.quarterId !== activeQuarterId) continue;
-    if (role.role === 'DRI' && !driByProject.has(role.projectId)) {
-      driByProject.set(role.projectId, role.personId);
-    }
-    if (role.role === 'EM' && !emByProject.has(role.projectId)) {
-      emByProject.set(role.projectId, role.personId);
-    }
-    if (role.role === 'PM' && !pmByProject.has(role.projectId)) {
-      pmByProject.set(role.projectId, role.personId);
-    }
-  }
-
-  const activeProjects = projects.filter((p) => ACTIVE_STATUSES.has(p.status));
-  const archivedProjects = projects.filter((p) => ARCHIVED_STATUSES.has(p.status));
+  const activeQuarterId = getActiveQuarter(quarters)?.id;
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projectRoles, activeQuarterId ?? null);
+  const healthByProject = buildProjectHealthMap(projects, unknowns, risks);
+  const { activeProjects, archivedProjects } = splitProjectsByStatus(projects);
+  const allTags = listProjectTags(projects);
+  const visibleTags = filterTagOptions(allTags, deferredTagQuery);
+  const displayedTags = showAllTags || deferredTagQuery
+    ? visibleTags
+    : visibleTags.slice(0, COLLAPSED_TAG_LIMIT);
+  const filteredActiveProjects = filterProjectsByTags(activeProjects, selectedTags);
+  const filteredArchivedProjects = filterProjectsByTags(archivedProjects, selectedTags);
 
   async function createProject() {
     if (!name.trim()) return;
     const id = uid();
     await db.projects.add({
       id, name: name.trim(), description: '', status,
+      tags: [],
       owningSubteamId: null, createdAt: new Date().toISOString(), archivedAt: null,
     });
     setName(''); setAdding(false);
+  }
+
+  function toggleTag(tag: string) {
+    const normalizedTag = normalizeProjectTag(tag);
+    setSelectedTags((current) =>
+      current.includes(normalizedTag)
+        ? current.filter((entry) => entry !== normalizedTag)
+        : [...current, normalizedTag],
+    );
   }
 
   function renderProjectGrid(list: typeof projects) {
@@ -82,10 +89,7 @@ export default function ProjectsPage() {
                   dri={driId ? personById.get(driId) : null}
                   em={emId ? personById.get(emId) : null}
                   pm={pmId ? personById.get(pmId) : null}
-                  health={computeProjectHealth(
-                    unknowns.filter((u) => u.projectId === project.id),
-                    risks.filter((r) => r.projectId === project.id),
-                  )}
+                  health={healthByProject.get(project.id)}
                 />
               </Link>
               <button
@@ -104,11 +108,74 @@ export default function ProjectsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-zinc-50">Projects</h1>
-        <button
-          onClick={() => setAdding(true)}
-          className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:border-sky-400/30 hover:bg-white/8"
-        >+ New project</button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setAdding(true)}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:border-sky-400/30 hover:bg-white/8"
+          >+ New project</button>
+        </div>
       </div>
+
+      {allTags.length > 0 && (
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-500">Tags</span>
+              {selectedTags.length > 0 && (
+                <span className="text-xs text-zinc-500">{selectedTags.length} selected</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                value={tagQuery}
+                onChange={(e) => {
+                  setTagQuery(e.target.value);
+                  if (e.target.value) setShowAllTags(true);
+                }}
+                placeholder="Search tags…"
+                className="w-40 rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-sky-500/50 focus:outline-none"
+              />
+              {selectedTags.length > 0 && (
+                <button
+                  onClick={() => setSelectedTags([])}
+                  className="text-sm text-zinc-500 hover:text-zinc-300"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto pr-1">
+            {displayedTags.map((tag) => {
+              const selected = selectedTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  onClick={() => toggleTag(tag)}
+                  className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    selected
+                      ? 'border-sky-400/40 bg-sky-400/15 text-sky-200'
+                      : 'border-white/10 bg-white/5 text-zinc-400 hover:border-white/20 hover:text-zinc-200'
+                  }`}
+                >
+                  #{tag}
+                </button>
+              );
+            })}
+            {displayedTags.length === 0 && (
+              <p className="text-sm text-zinc-500">No tags match that search.</p>
+            )}
+          </div>
+          {!deferredTagQuery && visibleTags.length > COLLAPSED_TAG_LIMIT && (
+            <button
+              onClick={() => setShowAllTags((current) => !current)}
+              className="text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              {showAllTags ? 'Show fewer tags' : `Show all ${visibleTags.length} tags`}
+            </button>
+          )}
+        </div>
+      )}
 
       {adding && (
         <div className="flex items-center gap-2 flex-wrap rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -134,22 +201,27 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {activeProjects.length === 0 && !adding ? (
-        <EmptyState title="No projects yet" description="Create a project to start planning." />
+      {filteredActiveProjects.length === 0 && !adding ? (
+        <EmptyState
+          title={selectedTags.length > 0 ? 'No projects for these tags' : 'No projects yet'}
+          description={selectedTags.length > 0
+            ? `No active or proposed projects match ${selectedTags.map((tag) => `#${tag}`).join(', ')}.`
+            : 'Create a project to start planning.'}
+        />
       ) : (
-        renderProjectGrid(activeProjects)
+        renderProjectGrid(filteredActiveProjects)
       )}
 
-      {archivedProjects.length > 0 && (
+      {filteredArchivedProjects.length > 0 && (
         <div className="space-y-3">
           <button
             onClick={() => setShowArchived((v) => !v)}
             className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
             <span className={`transition-transform ${showArchived ? 'rotate-90' : ''}`}>▶</span>
-            <span>Archived ({archivedProjects.length})</span>
+            <span>Archived ({filteredArchivedProjects.length})</span>
           </button>
-          {showArchived && renderProjectGrid(archivedProjects)}
+          {showArchived && renderProjectGrid(filteredArchivedProjects)}
         </div>
       )}
     </div>

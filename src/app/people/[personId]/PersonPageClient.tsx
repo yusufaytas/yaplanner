@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { InlineEditText, InlineEditSelect, InlineEditNumber } from '@/components/ui/InlineEdit';
 import { getPersonProjectCapacityShares, personNeedsProjectCapacity, planQuarterProjectAllocation } from '@/lib/project-team';
+import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
 
 const ROLE_OPTIONS = [
   { value: 'Engineer', label: 'Engineer' },
@@ -22,7 +23,7 @@ export default function PersonPageClient() {
     const [person, subteams, quarters, projectRoles, allocations, projects] = await Promise.all([
       db.people.get(personId),
       db.subteams.orderBy('name').toArray(),
-      db.quarters.where('status').equals('active').toArray(),
+      listResolvedQuarters(),
       db.projectRoles.where('personId').equals(personId).toArray(),
       db.allocations.where('personId').equals(personId).toArray(),
       db.projects.toArray(),
@@ -34,7 +35,7 @@ export default function PersonPageClient() {
   if (!data.person) return <div className="text-sm text-zinc-400">Person not found.</div>;
 
   const { person, subteams, quarters, projectRoles, allocations, projects } = data;
-  const activeQuarter = quarters[0] ?? null;
+  const activeQuarter = getActiveQuarter(quarters);
   const projectById = new Map(projects.map((p) => [p.id, p]));
 
   const save = (patch: Parameters<typeof db.people.update>[1]) =>

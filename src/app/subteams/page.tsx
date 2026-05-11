@@ -7,6 +7,7 @@ import { db } from '@/lib/db';
 import { SubteamCard } from '@/components/subteams/SubteamCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { normalizeSubteamName, suggestSubteamName } from '@/lib/subteams';
+import { getSubteamMemberCollections, getSubteamMemberCountBySubteam } from '@/lib/subteam-directory';
 
 function uid() { return crypto.randomUUID(); }
 
@@ -27,14 +28,9 @@ export default function SubteamsPage() {
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
 
   const { subteams, people } = data;
-  const engineers = people.filter((person) => person.role === 'Engineer');
+  const { engineers } = getSubteamMemberCollections(people, '');
   const personById = new Map(people.map((p) => [p.id, p]));
-  const memberCountBySubteam = new Map<string, number>();
-  for (const p of engineers) {
-    if (p.subteamId) {
-      memberCountBySubteam.set(p.subteamId, (memberCountBySubteam.get(p.subteamId) ?? 0) + 1);
-    }
-  }
+  const memberCountBySubteam = getSubteamMemberCountBySubteam(people);
 
   async function createSubteam() {
     const normalizedName = normalizeSubteamName(name);

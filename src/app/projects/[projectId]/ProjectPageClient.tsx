@@ -11,14 +11,25 @@ import {
   getAssignablePeopleForProjectRole,
   getEditableProjectRoleOptions,
   getPersonProjectCapacityShare,
-  getPersonProjectCapacityShares,
+  planProjectAllocationTemplate,
   getProjectRoleOptions,
   personNeedsProjectCapacity,
   planQuarterProjectAllocation,
   planAddProjectRole, planProjectRolePersonChange, planProjectRoleTypeChange, type ProjectTeamMutationPlan,
 } from '@/lib/project-team';
-import { getProjectCapacitySummary, getAssignableEngineers } from '@/lib/quarter-capacity';
-import { computeProjectHealth } from '@/lib/project-health';
+import { getAssignableEngineers } from '@/lib/quarter-capacity';
+import {
+  buildProjectQuarterCapacitySummaries,
+  getActiveProjectAllocations,
+  getActiveProjectRoles,
+  getAssignedProjectQuarters,
+  getRemainingProjectPersonCapacity,
+  sortProjectRoles,
+} from '@/lib/project-detail';
+import { planEnsureProjectInQuarter } from '@/lib/quarter-projects';
+import { getActiveQuarter, listResolvedQuarters } from '@/lib/quarters';
+import { computeProjectHealth, projectHealthMeta } from '@/lib/project-health';
+import { formatProjectTags, getProjectTags, parseProjectTagsInput } from '@/lib/project-tags';
 
 const STATUS_OPTIONS: { value: ProjectStatus; label: string }[] = [
   { value: 'Proposed',  label: 'Proposed'  },
@@ -74,7 +85,7 @@ export default function ProjectPageClient() {
         db.projects.get(projectId),
         db.people.orderBy('name').toArray(),
         db.subteams.toArray(),
-        db.quarters.orderBy('startDate').reverse().toArray(),
+        listResolvedQuarters(),
         db.projectRoles.toArray(),
         db.projectStakeholders.where('projectId').equals(projectId).toArray(),
         db.quarterPeople.toArray(),
@@ -91,46 +102,27 @@ export default function ProjectPageClient() {
   if (!data.project) return <div className="text-sm text-zinc-400">Project not found.</div>;
 
   const { project, people, subteams, allQuarters, allProjectRoles, projectStakeholders, quarterPeople, projectLinks, unknowns, risks, allocations, allQuarterProjects } = data;
-  const activeQuarter = allQuarters.find((q) => q.status === 'active') ?? null;
+  const activeQuarter = getActiveQuarter(allQuarters);
   const activeQuarterId = activeQuarter?.id ?? null;
-  const activeProjectRoles = activeQuarterId
-    ? allProjectRoles.filter((role) => role.quarterId === activeQuarterId)
-    : allProjectRoles;
-  const projectRoles = activeProjectRoles.filter((role) => role.projectId === projectId);
-  const activeAllocations = activeQuarterId
-    ? allocations.filter((allocation) => allocation.quarterId === activeQuarterId)
-    : allocations;
-
-  // Quarters that have a QuarterProject entry for this project, sorted newest first
-  const projectQuarterIds = new Set(allQuarterProjects.map((qp) => qp.quarterId));
-  const assignedQuarters = allQuarters.filter((q) => projectQuarterIds.has(q.id));
-
-  // Per-quarter capacity summaries
-  const quarterCapacitySummaries = assignedQuarters.map((quarter) => {
-    const qp = allQuarterProjects.find((q) => q.quarterId === quarter.id);
-    const qProjectRoles = allProjectRoles.filter((r) => r.quarterId === quarter.id);
-    const qAllocations = allocations.filter((a) => a.quarterId === quarter.id);
-    const summary = getProjectCapacitySummary({
-      projectId,
-      quarter,
-      estimatedPersonWeeks: qp?.estimatedPersonWeeks ?? null,
-      people,
-      quarterPeople,
-      activeProjectRoles: qProjectRoles,
-      activeAllocations: qAllocations,
-    });
-    return { quarter, quarterProject: qp ?? null, summary };
+  const { activeProjectRoles, projectRoles } = getActiveProjectRoles(projectId, activeQuarterId, allProjectRoles);
+  const activeAllocations = getActiveProjectAllocations(activeQuarterId, allocations);
+  const assignedQuarters = getAssignedProjectQuarters(allQuarters, allQuarterProjects);
+  const quarterCapacitySummaries = buildProjectQuarterCapacitySummaries({
+    projectId,
+    assignedQuarters,
+    allQuarterProjects,
+    allProjectRoles,
+    allocations,
+    people,
+    quarterPeople,
   });
 
   const openUnknowns = unknowns.filter((u) => !u.resolved).length;
   const openRisks    = risks.filter((r) => !r.mitigated).length;
-  const health = computeProjectHealth(unknowns, risks);
+  const health = computeProjectHealth(project.status, unknowns, risks);
+  const healthMeta = projectHealthMeta[health];
 
-  const roleOrder: ProjectRoleType[] = ['DRI', 'EM', 'PM', 'Engineer'];
-  const sortedRoles = [...projectRoles].sort((a, b) => {
-    const ai = roleOrder.indexOf(a.role); const bi = roleOrder.indexOf(b.role);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
+  const sortedRoles = sortProjectRoles(projectRoles);
   const currentDri = projectRoles.find((role) => role.role === 'DRI');
   const projectSubteam = project.owningSubteamId
     ? subteams.find((subteam) => subteam.id === project.owningSubteamId) ?? null
@@ -149,22 +141,7 @@ export default function ProjectPageClient() {
   });
 
   function getRemainingCapacity(personId: string): number {
-    const person = people.find((p) => p.id === personId);
-    if (!person) return 100;
-    const assignedProjectIds = activeProjectRoles
-      .filter((r) => r.personId === personId)
-      .map((r) => r.projectId);
-    if (assignedProjectIds.length === 0) return person.defaultCapacity;
-    const personAllocations = activeAllocations.filter((a) => a.personId === personId);
-    const shares = getPersonProjectCapacityShares(
-      personId,
-      person.defaultCapacity,
-      assignedProjectIds,
-      activeProjectRoles,
-      personAllocations,
-    );
-    const totalAllocated = shares.reduce((sum, s) => sum + s.percentage, 0);
-    return Math.max(0, person.defaultCapacity - totalAllocated);
+    return getRemainingProjectPersonCapacity(personId, people, activeProjectRoles, activeAllocations);
   }
 
   // ── project field saves ──────────────────────────────────────────────────
@@ -194,8 +171,20 @@ export default function ProjectPageClient() {
     for (const update of plan.peopleUpdates) {
       await db.people.update(update.personId, { subteamId: update.subteamId });
     }
+    if (plan.quarterPeopleToCreate.length > 0) {
+      await db.quarterPeople.bulkAdd(plan.quarterPeopleToCreate);
+    }
     for (const update of plan.quarterPeopleUpdates) {
       await db.quarterPeople.update(update.quarterPersonId, { subteamId: update.subteamId });
+    }
+  }
+
+  async function ensureLeadershipRoleAppearsInActiveQuarter(roleType: ProjectRoleType) {
+    if (!activeQuarter) return;
+    const quarterProjects = await db.quarterProjects.where('quarterId').equals(activeQuarter.id).toArray();
+    const quarterProjectToCreate = planEnsureProjectInQuarter(activeQuarter, quarterProjects, project, roleType, uid);
+    if (quarterProjectToCreate) {
+      await db.quarterProjects.add(quarterProjectToCreate);
     }
   }
 
@@ -218,8 +207,9 @@ export default function ProjectPageClient() {
       nowIso: () => new Date().toISOString(),
     });
     if (typeof plan === 'string') return;
-    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople], async () => {
+    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople, db.quarterProjects], async () => {
       await applyProjectTeamMutationPlan(plan);
+      await ensureLeadershipRoleAppearsInActiveQuarter(newRoleType);
     });
     // For Engineers, immediately write the chosen capacity allocation
     if (newRoleType === 'Engineer') {
@@ -235,33 +225,46 @@ export default function ProjectPageClient() {
       nowIso: () => new Date().toISOString(),
     });
     if (typeof plan === 'string') return;
-    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople], async () => {
+    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople, db.quarterProjects], async () => {
       await applyProjectTeamMutationPlan(plan);
+      await ensureLeadershipRoleAppearsInActiveQuarter(nextRole);
     });
   }
 
   async function saveRolePerson(roleId: string, personId: string) {
+    const existingRole = projectRoles.find((role) => role.id === roleId);
     const plan = planProjectRolePersonChange(buildProjectTeamContext(), roleId, personId, {
       createId: uid,
       nowIso: () => new Date().toISOString(),
     });
     if (typeof plan === 'string') return;
-    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople], async () => {
+    await db.transaction('rw', [db.projectRoles, db.projects, db.subteams, db.people, db.quarterPeople, db.quarterProjects], async () => {
       await applyProjectTeamMutationPlan(plan);
+      if (existingRole) {
+        await ensureLeadershipRoleAppearsInActiveQuarter(existingRole.role);
+      }
     });
   }
 
   async function saveRoleCapacity(personId: string, percentage: number) {
-    if (!activeQuarter) return;
-    const plan = planQuarterProjectAllocation(
-      activeQuarter,
-      personId,
-      projectId,
-      percentage,
-      activeProjectRoles,
-      activeAllocations,
-      uid,
-    );
+    const plan = activeQuarter
+      ? planQuarterProjectAllocation(
+        activeQuarter,
+        personId,
+        projectId,
+        percentage,
+        activeProjectRoles,
+        activeAllocations,
+        uid,
+      )
+      : planProjectAllocationTemplate(
+        personId,
+        projectId,
+        percentage,
+        activeProjectRoles,
+        activeAllocations,
+        uid,
+      );
     await db.transaction('rw', db.allocations, async () => {
       if (plan.allocationsToDelete.length > 0) {
         await db.allocations.bulkDelete(plan.allocationsToDelete);
@@ -339,12 +342,8 @@ export default function ProjectPageClient() {
               <span>{projectSubteam?.name ?? 'No subteam yet'}</span>
             </div>
           </div>
-          <div className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
-            health === 'green'  ? 'bg-emerald-500/20 text-emerald-300' :
-            health === 'yellow' ? 'bg-amber-500/20 text-amber-300' :
-                                  'bg-rose-500/20 text-rose-300'
-          }`}>
-            {health === 'green' ? '● On track' : health === 'yellow' ? '● At risk' : '● High risk'}
+          <div className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${healthMeta.pillClassName}`}>
+            {`● ${healthMeta.label}`}
           </div>
         </div>
 
@@ -359,6 +358,17 @@ export default function ProjectPageClient() {
             className="text-sm text-zinc-300 leading-relaxed w-full"
           />
         </div>
+
+        <div>
+          <p className="mb-1 text-xs uppercase tracking-[0.2em] text-zinc-500">Tags</p>
+          <InlineEditText
+            value={formatProjectTags(getProjectTags(project))}
+            onSave={(value) => saveProject({ tags: parseProjectTagsInput(value) })}
+            placeholder="Add tags, comma-separated…"
+            emptyLabel="No tags"
+            className="text-sm text-zinc-300"
+          />
+        </div>
       </div>
 
       {/* ── Quarter Planning ── */}
@@ -366,7 +376,7 @@ export default function ProjectPageClient() {
         <h2 className="text-sm font-semibold text-zinc-200">Quarter planning</h2>
 
         {assignedQuarters.length === 0 && (
-          <p className="text-sm text-zinc-600 italic">This project hasn't been added to any quarter yet.</p>
+          <p className="text-sm text-zinc-600 italic">This project has not been added to any quarter yet.</p>
         )}
 
         {assignedQuarters.length > 0 && (
@@ -472,7 +482,7 @@ export default function ProjectPageClient() {
               ? getPersonProjectCapacityShare(person, projectId, activeProjectRoles, activeAllocations)
               : { projectId, percentage: 0, isEvenSplit: true };
             return (
-              <div key={role.id} className="group relative text-sm rounded-lg border border-white/5 bg-white/[0.02] p-3">
+              <div key={role.id} className="text-sm rounded-lg border border-white/5 bg-white/[0.02] p-3">
                 <p className="mb-1 text-xs text-zinc-500">
                   <InlineEditSelect
                     value={role.role as ProjectRoleType}
@@ -503,9 +513,10 @@ export default function ProjectPageClient() {
                 )}
                 <button
                   onClick={() => db.projectRoles.delete(role.id)}
-                  className="absolute top-2 right-2 hidden group-hover:block text-zinc-600 hover:text-rose-400 text-xs"
-                  title="Remove role"
-                >✕</button>
+                  className="mt-3 text-left text-xs text-zinc-600 hover:text-rose-400"
+                >
+                  Remove role
+                </button>
               </div>
             );
           })}
@@ -578,7 +589,7 @@ export default function ProjectPageClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {projectStakeholders.map((stakeholder) => (
-            <div key={stakeholder.id} className="group relative text-sm rounded-lg border border-white/5 bg-white/[0.02] p-3">
+            <div key={stakeholder.id} className="text-sm rounded-lg border border-white/5 bg-white/[0.02] p-3">
               <p className="mb-1 text-xs text-zinc-500">Stakeholder</p>
               <InlineEditSelect
                 value={stakeholder.personId}
@@ -588,9 +599,10 @@ export default function ProjectPageClient() {
               />
               <button
                 onClick={() => db.projectStakeholders.delete(stakeholder.id)}
-                className="absolute top-2 right-2 hidden group-hover:block text-zinc-600 hover:text-rose-400 text-xs"
-                title="Remove stakeholder"
-              >✕</button>
+                className="mt-3 text-left text-xs text-zinc-600 hover:text-rose-400"
+              >
+                Remove stakeholder
+              </button>
             </div>
           ))}
         </div>

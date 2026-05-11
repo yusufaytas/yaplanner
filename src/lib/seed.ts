@@ -67,11 +67,11 @@ export async function seedSampleData(): Promise<void> {
   await db.subteams.update(stFrontend.id, { driPersonId: julia.id  });
 
   // ── Projects ──────────────────────────────────────────────────────────────
-  const pMercury: Project = { id: uid(), name: 'Project Mercury',         description: 'Migrate core API to new infrastructure with zero downtime.',          status: 'Active', owningSubteamId: stPlatform.id, createdAt: now, archivedAt: null };
-  const pData:    Project = { id: uid(), name: 'Data Migration',           description: 'Move legacy data warehouse to modern lakehouse architecture.',         status: 'Active', owningSubteamId: stData.id,     createdAt: now, archivedAt: null };
-  const pSearch:  Project = { id: uid(), name: 'Search Revamp',            description: 'Rebuild search indexing pipeline for 10x throughput.',                status: 'Active', owningSubteamId: stSearch.id,   createdAt: now, archivedAt: null };
-  const pMobile:  Project = { id: uid(), name: 'Mobile App v2',            description: 'Redesign mobile app with new design system and offline support.',     status: 'Active', owningSubteamId: stFrontend.id, createdAt: now, archivedAt: null };
-  const pInfra:   Project = { id: uid(), name: 'Platform Infra Hardening', description: 'Improve observability, reduce p99 latency, and harden SLOs.',        status: 'Active', owningSubteamId: stPlatform.id, createdAt: now, archivedAt: null };
+  const pMercury: Project = { id: uid(), name: 'Project Mercury',         description: 'Migrate core API to new infrastructure with zero downtime.',          status: 'Active', tags: ['platform', 'migration'], owningSubteamId: stPlatform.id, createdAt: now, archivedAt: null };
+  const pData:    Project = { id: uid(), name: 'Data Migration',           description: 'Move legacy data warehouse to modern lakehouse architecture.',         status: 'Active', tags: ['data', 'migration'], owningSubteamId: stData.id,     createdAt: now, archivedAt: null };
+  const pSearch:  Project = { id: uid(), name: 'Search Revamp',            description: 'Rebuild search indexing pipeline for 10x throughput.',                status: 'Active', tags: ['search', 'reliability'], owningSubteamId: stSearch.id,   createdAt: now, archivedAt: null };
+  const pMobile:  Project = { id: uid(), name: 'Mobile App v2',            description: 'Redesign mobile app with new design system and offline support.',     status: 'Active', tags: ['mobile', 'frontend'], owningSubteamId: stFrontend.id, createdAt: now, archivedAt: null };
+  const pInfra:   Project = { id: uid(), name: 'Platform Infra Hardening', description: 'Improve observability, reduce p99 latency, and harden SLOs.',        status: 'Active', tags: ['platform', 'infra'], owningSubteamId: stPlatform.id, createdAt: now, archivedAt: null };
 
   await db.projects.bulkAdd([pMercury, pData, pSearch, pMobile, pInfra]);
 

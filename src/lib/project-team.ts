@@ -16,6 +16,7 @@ export interface ProjectTeamMutationPlan {
   roleToCreate?: ProjectRole;
   peopleUpdates: Array<{ personId: string; subteamId: string | null }>;
   projectPatch?: Partial<Project>;
+  quarterPeopleToCreate: QuarterPerson[];
   quarterPeopleUpdates: Array<{ quarterPersonId: string; subteamId: string | null }>;
   subteamToCreate?: Subteam;
   subteamToUpdate?: { id: string; patch: Partial<Subteam> };
@@ -33,6 +34,9 @@ export interface ProjectCapacityAllocationPlan {
   percentage: number;
 }
 
+const TEMPLATE_QUARTER_ID = '';
+const TEMPLATE_WEEK_START = '';
+
 export type ProjectTeamRuleError =
   | 'duplicate_dri'
   | 'duplicate_person'
@@ -46,6 +50,10 @@ function uniqueProjectIds(projectIds: string[]): string[] {
 
 export function personNeedsProjectCapacity(personRole: string): boolean {
   return personRole === 'Engineer';
+}
+
+export function projectRoleNeedsCapacity(projectRole: ProjectRoleType): boolean {
+  return projectRole === 'Engineer' || projectRole === 'DRI';
 }
 
 export function getProjectCapacityMinimum(
@@ -223,6 +231,82 @@ export function planQuarterProjectAllocation(
   };
 }
 
+export function planProjectAllocationTemplate(
+  personId: string,
+  projectId: string,
+  percentage: number,
+  activeProjectRoles: ProjectRole[],
+  existingAllocations: Allocation[],
+  createId: () => string,
+): ProjectCapacityAllocationPlan {
+  const minimumPercentage = getProjectCapacityMinimum(personId, projectId, activeProjectRoles);
+  const clampedPercentage = Math.max(minimumPercentage, Math.min(100, Math.round(percentage)));
+  const matchingAllocations = existingAllocations.filter(
+    (allocation) =>
+      allocation.quarterId === TEMPLATE_QUARTER_ID &&
+      allocation.personId === personId &&
+      allocation.projectId === projectId,
+  );
+
+  if (clampedPercentage === 0) {
+    return {
+      allocationsToDelete: matchingAllocations.map((allocation) => allocation.id),
+      allocationsToUpsert: [],
+      percentage: 0,
+    };
+  }
+
+  const existingTemplateAllocation = matchingAllocations.find(
+    (allocation) => allocation.weekStart === TEMPLATE_WEEK_START,
+  );
+
+  return {
+    allocationsToDelete: matchingAllocations
+      .filter((allocation) => allocation.id !== existingTemplateAllocation?.id)
+      .map((allocation) => allocation.id),
+    allocationsToUpsert: [{
+      id: existingTemplateAllocation?.id ?? createId(),
+      quarterId: TEMPLATE_QUARTER_ID,
+      personId,
+      projectId,
+      weekStart: TEMPLATE_WEEK_START,
+      percentage: clampedPercentage,
+    }],
+    percentage: clampedPercentage,
+  };
+}
+
+export function materializeTemplateAllocationsForQuarter(
+  quarter: Quarter,
+  projectId: string,
+  templateRoles: ProjectRole[],
+  existingAllocations: Allocation[],
+  createId: () => string,
+): ProjectCapacityAllocationPlan[] {
+  const templateRoleKeys = new Set(
+    templateRoles
+      .filter((role) => projectRoleNeedsCapacity(role.role))
+      .map((role) => `${role.personId}:${role.projectId}`),
+  );
+
+  return existingAllocations
+    .filter(
+      (allocation) =>
+        allocation.quarterId === TEMPLATE_QUARTER_ID &&
+        allocation.projectId === projectId &&
+        templateRoleKeys.has(`${allocation.personId}:${allocation.projectId}`),
+    )
+    .map((allocation) => planQuarterProjectAllocation(
+      quarter,
+      allocation.personId,
+      allocation.projectId,
+      allocation.percentage,
+      templateRoles,
+      existingAllocations,
+      createId,
+    ));
+}
+
 interface PlannerDeps {
   createId: () => string;
   nowIso: () => string;
@@ -255,16 +339,28 @@ function findQuarterPerson(
 
 function attachEngineerPlan(
   context: ProjectTeamContext,
-  personId: string,
+  person: Person,
   subteamId: string | null,
-): Pick<ProjectTeamMutationPlan, 'peopleUpdates' | 'quarterPeopleUpdates'> {
-  const peopleUpdates = [{ personId, subteamId }];
-  const quarterPerson = findQuarterPerson(context.quarterPeople, context.activeQuarterId, personId);
+  deps: Pick<PlannerDeps, 'createId'>,
+): Pick<ProjectTeamMutationPlan, 'peopleUpdates' | 'quarterPeopleToCreate' | 'quarterPeopleUpdates'> {
+  const peopleUpdates = [{ personId: person.id, subteamId }];
+  const quarterPerson = findQuarterPerson(context.quarterPeople, context.activeQuarterId, person.id);
+  const quarterPeopleToCreate = !quarterPerson && context.activeQuarterId
+    ? [{
+      id: deps.createId(),
+      quarterId: context.activeQuarterId,
+      personId: person.id,
+      subteamId,
+      inactive: false,
+      quarterCapacity: person.defaultCapacity,
+      overheadOverride: null,
+    }]
+    : [];
   const quarterPeopleUpdates = quarterPerson
     ? [{ quarterPersonId: quarterPerson.id, subteamId }]
     : [];
 
-  return { peopleUpdates, quarterPeopleUpdates };
+  return { peopleUpdates, quarterPeopleToCreate, quarterPeopleUpdates };
 }
 
 function ensureProjectSubteamPlan(
@@ -371,8 +467,8 @@ export function planAddProjectRole(
   if (roleType === 'DRI') {
     const subteamPlan = ensureProjectSubteamPlan(context, personId, deps);
     const engineerAttachment = person.role === 'Engineer'
-      ? attachEngineerPlan(context, personId, subteamPlan.subteamId)
-      : { peopleUpdates: [], quarterPeopleUpdates: [] };
+      ? attachEngineerPlan(context, person, subteamPlan.subteamId, deps)
+      : { peopleUpdates: [], quarterPeopleToCreate: [], quarterPeopleUpdates: [] };
 
     return {
       roleToCreate,
@@ -380,15 +476,17 @@ export function planAddProjectRole(
       subteamToCreate: subteamPlan.subteamToCreate,
       subteamToUpdate: subteamPlan.subteamToUpdate,
       peopleUpdates: engineerAttachment.peopleUpdates,
+      quarterPeopleToCreate: engineerAttachment.quarterPeopleToCreate,
       quarterPeopleUpdates: engineerAttachment.quarterPeopleUpdates,
     };
   }
 
   if (roleType === 'Engineer') {
-    const engineerAttachment = attachEngineerPlan(context, personId, context.project.owningSubteamId);
+    const engineerAttachment = attachEngineerPlan(context, person, context.project.owningSubteamId, deps);
     return {
       roleToCreate,
       peopleUpdates: engineerAttachment.peopleUpdates,
+      quarterPeopleToCreate: engineerAttachment.quarterPeopleToCreate,
       quarterPeopleUpdates: engineerAttachment.quarterPeopleUpdates,
     };
   }
@@ -396,6 +494,7 @@ export function planAddProjectRole(
   return {
     roleToCreate,
     peopleUpdates: [],
+    quarterPeopleToCreate: [],
     quarterPeopleUpdates: [],
   };
 }
@@ -419,8 +518,8 @@ export function planProjectRoleTypeChange(
   if (nextRole === 'DRI') {
     const subteamPlan = ensureProjectSubteamPlan(context, role.personId, deps);
     const engineerAttachment = person?.role === 'Engineer'
-      ? attachEngineerPlan(context, role.personId, subteamPlan.subteamId)
-      : { peopleUpdates: [], quarterPeopleUpdates: [] };
+      ? attachEngineerPlan(context, person, subteamPlan.subteamId, deps)
+      : { peopleUpdates: [], quarterPeopleToCreate: [], quarterPeopleUpdates: [] };
 
     return {
       roleUpdate,
@@ -428,15 +527,18 @@ export function planProjectRoleTypeChange(
       subteamToCreate: subteamPlan.subteamToCreate,
       subteamToUpdate: subteamPlan.subteamToUpdate,
       peopleUpdates: engineerAttachment.peopleUpdates,
+      quarterPeopleToCreate: engineerAttachment.quarterPeopleToCreate,
       quarterPeopleUpdates: engineerAttachment.quarterPeopleUpdates,
     };
   }
 
   if (nextRole === 'Engineer') {
-    const engineerAttachment = attachEngineerPlan(context, role.personId, context.project.owningSubteamId);
+    if (!person) return 'missing_person';
+    const engineerAttachment = attachEngineerPlan(context, person, context.project.owningSubteamId, deps);
     return {
       roleUpdate,
       peopleUpdates: engineerAttachment.peopleUpdates,
+      quarterPeopleToCreate: engineerAttachment.quarterPeopleToCreate,
       quarterPeopleUpdates: engineerAttachment.quarterPeopleUpdates,
     };
   }
@@ -444,6 +546,7 @@ export function planProjectRoleTypeChange(
   return {
     roleUpdate,
     peopleUpdates: [],
+    quarterPeopleToCreate: [],
     quarterPeopleUpdates: [],
   };
 }
@@ -466,8 +569,8 @@ export function planProjectRolePersonChange(
   if (role.role === 'DRI') {
     const subteamPlan = ensureProjectSubteamPlan(context, personId, deps);
     const engineerAttachment = person.role === 'Engineer'
-      ? attachEngineerPlan(context, personId, subteamPlan.subteamId)
-      : { peopleUpdates: [], quarterPeopleUpdates: [] };
+      ? attachEngineerPlan(context, person, subteamPlan.subteamId, deps)
+      : { peopleUpdates: [], quarterPeopleToCreate: [], quarterPeopleUpdates: [] };
 
     return {
       roleUpdate,
@@ -475,15 +578,17 @@ export function planProjectRolePersonChange(
       subteamToCreate: subteamPlan.subteamToCreate,
       subteamToUpdate: subteamPlan.subteamToUpdate,
       peopleUpdates: engineerAttachment.peopleUpdates,
+      quarterPeopleToCreate: engineerAttachment.quarterPeopleToCreate,
       quarterPeopleUpdates: engineerAttachment.quarterPeopleUpdates,
     };
   }
 
   if (role.role === 'Engineer') {
-    const engineerAttachment = attachEngineerPlan(context, personId, context.project.owningSubteamId);
+    const engineerAttachment = attachEngineerPlan(context, person, context.project.owningSubteamId, deps);
     return {
       roleUpdate,
       peopleUpdates: engineerAttachment.peopleUpdates,
+      quarterPeopleToCreate: engineerAttachment.quarterPeopleToCreate,
       quarterPeopleUpdates: engineerAttachment.quarterPeopleUpdates,
     };
   }
@@ -491,6 +596,7 @@ export function planProjectRolePersonChange(
   return {
     roleUpdate,
     peopleUpdates: [],
+    quarterPeopleToCreate: [],
     quarterPeopleUpdates: [],
   };
 }

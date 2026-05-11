@@ -10,6 +10,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { InlineEditNumber } from '@/components/ui/InlineEdit';
 import type { QuarterProject } from '@/lib/types';
 import { getProjectCapacitySummary, getQuarterCapacitySummary } from '@/lib/quarter-capacity';
+import { getAddableProjects, getAutoCapacityLineAfter, sortQuarterProjects } from '@/lib/quarter-portfolio';
+import { planAddProjectToQuarter } from '@/lib/quarter-projects';
 
 function uid() { return crypto.randomUUID(); }
 
@@ -69,80 +71,64 @@ export default function PortfolioDashboardClient() {
     rolesByProject.set(role.projectId, arr);
   }
 
-  // Sort by priority (nulls last)
-  const sorted = [...quarterProjects].sort((a, b) => {
-    if (a.priority === null && b.priority === null) return 0;
-    if (a.priority === null) return 1;
-    if (b.priority === null) return -1;
-    return a.priority - b.priority;
-  });
+  const sorted = sortQuarterProjects(quarterProjects);
 
   const capacitySummary = quarter ? getQuarterCapacitySummary(quarter, people, quarterPeople) : null;
-
-  const assignedProjectIds = new Set(quarterProjects.map((qp) => qp.projectId));
-  const addableProjects = projects
-    .filter((p) => !assignedProjectIds.has(p.id) && p.status !== 'Complete' && p.status !== 'Cancelled')
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const addableProjects = getAddableProjects(projects, quarterProjects);
 
   async function addProject() {
-    if (!newProjectId) return;
-    const project = projects.find((p) => p.id === newProjectId);
-    if (!project) return;
-
-    // Find the most recent other quarter that has roles for this project,
-    // and copy DRI/EM/PM (not Engineers — capacity is quarter-specific)
-    const previousRoles = await db.projectRoles
+    if (!newProjectId || !quarter) return;
+    const [allProjectRoles, allAllocations, allQuarters] = await Promise.all([
+      db.projectRoles
       .where('projectId').equals(newProjectId)
-      .toArray();
-    const previousNonEngineerRoles = previousRoles.filter(
-      (r) => r.quarterId !== quarterId && r.role !== 'Engineer',
-    );
-    // Pick the most recent quarter's roles by taking the latest quarterId
-    // (quarters are ordered by startDate, so we look up their dates)
-    const previousQuarterIds = [...new Set(previousNonEngineerRoles.map((r) => r.quarterId))];
-    let rolesToCopy: typeof previousNonEngineerRoles = [];
-    if (previousQuarterIds.length > 0) {
-      const previousQuarters = await db.quarters.bulkGet(previousQuarterIds);
-      const latestQuarter = previousQuarters
-        .filter(Boolean)
-        .sort((a, b) => (b!.startDate > a!.startDate ? 1 : -1))[0];
-      if (latestQuarter) {
-        rolesToCopy = previousNonEngineerRoles.filter((r) => r.quarterId === latestQuarter.id);
-      }
-    }
+      .toArray(),
+      db.allocations.where('projectId').equals(newProjectId).toArray(),
+      db.quarters.toArray(),
+    ]);
+    const plan = planAddProjectToQuarter({
+      quarter,
+      quarterProjects,
+      quarterPeople,
+      projects,
+      people,
+      allProjectRoles,
+      allAllocations,
+      allQuarters,
+    }, newProjectId, uid);
+    if (!plan) return;
 
-    await db.transaction('rw', [db.quarterProjects, db.projectRoles], async () => {
-      await db.quarterProjects.add({
-        id: uid(),
-        quarterId,
-        projectId: newProjectId,
-        status: project.status,
-        priority: sorted.length,
-        estimatedPersonWeeks: null,
-        notes: '',
-        plannedStartWeek: null,
-        plannedEndWeek: null,
-        targetMilestone: null,
-      });
-      if (rolesToCopy.length > 0) {
-        await db.projectRoles.bulkAdd(
-          rolesToCopy.map((r) => ({ ...r, id: uid(), quarterId })),
-        );
+    await db.transaction('rw', [db.quarterProjects, db.projectRoles, db.quarterPeople, db.allocations], async () => {
+      await db.quarterProjects.add(plan.quarterProjectToCreate);
+      if (plan.quarterRolesToCreate.length > 0) {
+        await db.projectRoles.bulkAdd(plan.quarterRolesToCreate);
+      }
+      if (plan.quarterPeopleToCreate.length > 0) {
+        await db.quarterPeople.bulkAdd(plan.quarterPeopleToCreate);
+      }
+      for (const allocationPlan of plan.allocationPlans) {
+        if (allocationPlan.allocationsToDelete.length > 0) {
+          await db.allocations.bulkDelete(allocationPlan.allocationsToDelete);
+        }
+        if (allocationPlan.allocationsToUpsert.length > 0) {
+          await db.allocations.bulkPut(allocationPlan.allocationsToUpsert);
+        }
       }
     });
 
     setNewProjectId('');
     setAddingProject(false);
-  }  const cumulativeEstimatedByProjectId = new Map<string, number>();
+  }
+
+  const cumulativeEstimatedByProjectId = new Map<string, number>();
   let cumulativeEstimatedPersonWeeks = 0;
-  let autoCapacityLineAfter = -1;
   for (let i = 0; i < sorted.length; i++) {
     cumulativeEstimatedPersonWeeks += sorted[i].estimatedPersonWeeks ?? 0;
     cumulativeEstimatedByProjectId.set(sorted[i].id, Number(cumulativeEstimatedPersonWeeks.toFixed(1)));
-    if (autoCapacityLineAfter === -1 && capacitySummary && cumulativeEstimatedPersonWeeks >= capacitySummary.totalAvailablePersonWeeks) {
-      autoCapacityLineAfter = i;
-    }
   }
+  const autoCapacityLineAfter = getAutoCapacityLineAfter(
+    sorted,
+    capacitySummary?.totalAvailablePersonWeeks ?? null,
+  );
 
   // capacityLineAfter: index after which the red zone starts (0-based, so 2 means after row index 2)
   const lineAfter = quarter?.capacityLineAfter ?? autoCapacityLineAfter;

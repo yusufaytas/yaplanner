@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { projectHealthMeta } from '@/lib/project-health';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -145,9 +146,10 @@ export function UserGuideModal() {
                   <strong className="text-zinc-100">unknowns</strong> on the project:
                 </Rule>
                 <div className="space-y-1">
-                  <p><Tag color="rose">● High risk</Tag> — any open risk with High likelihood or High impact</p>
-                  <p><Tag color="amber">● At risk</Tag> — any open unknown, or any open risk with Medium likelihood/impact</p>
-                  <p><Tag color="emerald">● On track</Tag> — no open risks or unknowns</p>
+                  <p><Tag color="sky">{`● ${projectHealthMeta.blue.label}`}</Tag> — {projectHealthMeta.blue.description}</p>
+                  <p><Tag color="rose">{`● ${projectHealthMeta.red.label}`}</Tag> — {projectHealthMeta.red.description}</p>
+                  <p><Tag color="amber">{`● ${projectHealthMeta.yellow.label}`}</Tag> — {projectHealthMeta.yellow.description}</p>
+                  <p><Tag color="emerald">{`● ${projectHealthMeta.green.label}`}</Tag> — {projectHealthMeta.green.description}</p>
                 </div>
                 <Rule>
                   Resolve unknowns and mitigate risks to improve the health signal.

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { PersonCard } from '@/components/people/PersonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { resolveCreatedPersonSubteamId } from '@/lib/people-directory';
 
 function uid() { return crypto.randomUUID(); }
 
@@ -33,7 +34,7 @@ export default function PeoplePage() {
     if (!name.trim()) return;
     await db.people.add({
       id: uid(), name: name.trim(), email: null, role,
-      defaultCapacity: 100, subteamId: isEngineer ? subteamId || null : null,
+      defaultCapacity: 100, subteamId: resolveCreatedPersonSubteamId(role, subteamId),
       notes: '', createdAt: new Date().toISOString(),
     });
     setName(''); setAdding(false);
