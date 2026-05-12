@@ -1,8 +1,8 @@
 import { db } from './db';
 import { clampProjectAllocationPercentage, getMaxProjectAllocationPercentage, personTracksCapacity } from './person-capacity';
-import { listResolvedQuarters } from './quarters';
+import { listResolvedCycles } from './cycles';
 import { parseProjectTagsInput } from './project-tags';
-import type { Allocation, Project, ProjectStatus, Quarter, RiskImpact, RiskLikelihood, Role, Subteam } from './types';
+import type { Allocation, Project, ProjectStatus, Cycle, RiskImpact, RiskLikelihood, Role, Subteam } from './types';
 
 function uid() {
   return crypto.randomUUID();
@@ -47,7 +47,26 @@ function getProjectsInSubteam(project: Project, projects: Project[], subteamId: 
     : [project, ...siblingProjects];
 }
 
-function getAllocationStartDate(quarter: Quarter | null, today: string): string {
+function hasActiveDriForProjectSubteam(
+  allocations: Allocation[],
+  project: Project,
+  projects: Project[],
+): boolean {
+  const relevantProjectIds = new Set(
+    project.subteamId
+      ? getProjectsInSubteam(project, projects, project.subteamId).map((candidate) => candidate.id)
+      : [project.id],
+  );
+  return allocations.some(
+    (allocation) =>
+      allocation.projectId !== null
+      && relevantProjectIds.has(allocation.projectId)
+      && allocation.role === 'DRI'
+      && isActiveAllocation(allocation),
+  );
+}
+
+function getAllocationStartDate(quarter: Cycle | null, today: string): string {
   if (!quarter) return today;
   return today < quarter.startDate ? quarter.startDate : today;
 }
@@ -62,12 +81,29 @@ function getActiveProjectPersonAllocation(
   ) ?? null;
 }
 
+function getAllocationUniquenessKey(allocation: Pick<Allocation, 'cycleId' | 'personId' | 'projectId' | 'role' | 'endDate'>): string {
+  return `${allocation.cycleId ?? ''}::${allocation.personId}::${allocation.projectId ?? ''}::${allocation.role}::${allocation.endDate ?? 'active'}`;
+}
+
+function filterNewAllocationInserts(
+  existingAllocations: Allocation[],
+  requestedAllocations: Allocation[],
+): Allocation[] {
+  const seenKeys = new Set(existingAllocations.map(getAllocationUniquenessKey));
+  return requestedAllocations.filter((allocation) => {
+    const key = getAllocationUniquenessKey(allocation);
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  });
+}
+
 function buildAllocation(params: {
   createId: () => string;
   existingAllocation?: Allocation | null;
   personId: string;
   projectId: string;
-  quarter: Quarter | null;
+  quarter: Cycle | null;
   role: Role;
   percentage: number;
   startDate: string;
@@ -75,7 +111,7 @@ function buildAllocation(params: {
   const { createId, existingAllocation, personId, projectId, quarter, role, percentage, startDate } = params;
   return {
     id: createId(),
-    quarterId: existingAllocation?.quarterId ?? quarter?.id ?? null,
+    cycleId: existingAllocation?.cycleId ?? quarter?.id ?? null,
     personId,
     projectId,
     role,
@@ -122,7 +158,7 @@ export function planAddPersonToProjectSubteam(params: {
   percentage?: number;
   project: Project;
   projects: Project[];
-  quarter: Quarter | null;
+  quarter: Cycle | null;
   role: Role;
   today?: string;
 }): SubteamAllocationPropagationPlan {
@@ -183,37 +219,36 @@ export function planSetProjectDri(params: {
   percentage?: number;
   project: Project;
   projects: Project[];
-  quarter: Quarter | null;
+  quarter: Cycle | null;
   today?: string;
 }): SubteamAllocationPropagationPlan {
   const { allocations, createId, personId, percentage = 0, project, projects, quarter } = params;
   const today = params.today ?? todayDate();
-  const basePlan = planAddPersonToProjectSubteam({
-    allocations,
-    createId,
-    personId,
-    percentage,
-    project,
-    projects,
-    quarter,
-    role: 'DRI',
-    today,
-  });
+  const ensuredSubteam = planEnsureProjectSubteam(project, createId, `${today}T00:00:00.000Z`);
+  const subteamProjects = getProjectsInSubteam(project, projects, ensuredSubteam.subteamId);
   const startDate = getAllocationStartDate(quarter, today);
-  const allocationsToUpsert = [...basePlan.allocationsToUpsert];
-  const targetProjectDriRows = allocations.filter(
-    (allocation) => allocation.projectId === project.id && allocation.role === 'DRI' && allocation.personId !== personId && isActiveAllocation(allocation),
+  const allocationsToUpsert: Allocation[] = [];
+  const subteamProjectIds = new Set(subteamProjects.map((candidate) => candidate.id));
+  const currentSubteamDriRows = allocations.filter(
+    (allocation) =>
+      allocation.projectId !== null
+      && subteamProjectIds.has(allocation.projectId)
+      && allocation.role === 'DRI'
+      && allocation.personId !== personId
+      && isActiveAllocation(allocation),
   );
 
-  for (const currentDri of targetProjectDriRows) {
+  for (const currentDri of currentSubteamDriRows) {
+    const currentProjectId = currentDri.projectId;
+    if (!currentProjectId) continue;
     allocationsToUpsert.push(endAllocation(currentDri, today));
     const replacementExists = allocations.some(
-      (allocation) => allocation.projectId === project.id
+      (allocation) => allocation.projectId === currentProjectId
         && allocation.personId === currentDri.personId
         && allocation.role === 'Engineer'
         && isActiveAllocation(allocation),
     ) || allocationsToUpsert.some(
-      (allocation) => allocation.projectId === project.id
+      (allocation) => allocation.projectId === currentProjectId
         && allocation.personId === currentDri.personId
         && allocation.role === 'Engineer'
         && isActiveAllocation(allocation),
@@ -223,7 +258,7 @@ export function planSetProjectDri(params: {
         createId,
         existingAllocation: currentDri,
         personId: currentDri.personId,
-        projectId: project.id,
+        projectId: currentProjectId,
         quarter,
         role: 'Engineer',
         percentage: currentDri.percentage,
@@ -232,7 +267,43 @@ export function planSetProjectDri(params: {
     }
   }
 
-  return { ...basePlan, allocationsToUpsert };
+  for (const subteamProject of subteamProjects) {
+    const existing = getActiveProjectPersonAllocation(allocations, subteamProject.id, personId);
+    const desiredPercentage = subteamProject.id === project.id ? percentage : 0;
+
+    if (existing) {
+      if (existing.role === 'DRI') continue;
+      allocationsToUpsert.push(endAllocation(existing, today));
+      allocationsToUpsert.push(buildAllocation({
+        createId,
+        existingAllocation: existing,
+        personId,
+        projectId: subteamProject.id,
+        quarter,
+        role: 'DRI',
+        percentage: desiredPercentage,
+        startDate,
+      }));
+      continue;
+    }
+
+    allocationsToUpsert.push(buildAllocation({
+      createId,
+      personId,
+      projectId: subteamProject.id,
+      quarter,
+      role: 'DRI',
+      percentage: desiredPercentage,
+      startDate,
+    }));
+  }
+
+  return {
+    allocationsToUpsert,
+    projectPatch: ensuredSubteam.projectPatch,
+    subteamToCreate: ensuredSubteam.subteamToCreate,
+    subteamId: ensuredSubteam.subteamId,
+  };
 }
 
 function roleScopedProjectIds(params: {
@@ -291,7 +362,7 @@ export function planSyncProjectToSubteamRoster(params: {
   createId: () => string;
   project: Project;
   projects: Project[];
-  quarter: Quarter | null;
+  quarter: Cycle | null;
   today?: string;
 }): Allocation[] {
   const { allocations, createId, project, projects, quarter } = params;
@@ -308,6 +379,8 @@ export function planSyncProjectToSubteamRoster(params: {
       && siblingProjectIds.has(allocation.projectId)
       && isActiveAllocation(allocation),
   );
+  const hasSiblingDri = activeSiblingAllocations.some((allocation) => allocation.role === 'DRI');
+  if (!hasSiblingDri) return [];
   const activeTargetPersonIds = new Set(
     allocations
       .filter((allocation) => allocation.projectId === project.id && isActiveAllocation(allocation))
@@ -327,12 +400,14 @@ export function planSyncProjectToSubteamRoster(params: {
 
   for (const personId of rosterByPersonId.keys()) {
     if (activeTargetPersonIds.has(personId)) continue;
+    const siblingAllocs = rosterByPersonId.get(personId)!;
+    const role: Role = siblingAllocs.some((allocation) => allocation.role === 'DRI') ? 'DRI' : 'Engineer';
     allocationsToCreate.push(buildAllocation({
       createId,
       personId,
       projectId: project.id,
       quarter,
-      role: 'Engineer',
+      role,
       percentage: 0,
       startDate,
     }));
@@ -342,40 +417,40 @@ export function planSyncProjectToSubteamRoster(params: {
 }
 
 export async function getProjectPageData(projectId: string) {
-  const [project, projects, people, subteams, quarters, allocations, quarterPeople, quarterProjects] = await Promise.all([
+  const [project, projects, people, subteams, quarters, allocations, cyclePeople, cycleProjects] = await Promise.all([
     db.projects.get(projectId),
     db.projects.toArray(),
     db.people.orderBy('name').toArray(),
     db.subteams.toArray(),
-    listResolvedQuarters(),
+    listResolvedCycles(),
     db.allocations.toArray(),
-    db.quarterPeople.toArray(),
-    db.quarterProjects.where('projectId').equals(projectId).toArray(),
+    db.cyclePeople.toArray(),
+    db.cycleProjects.where('projectId').equals(projectId).toArray(),
   ]);
-  return { project, projects, people, subteams, quarters, allocations, quarterPeople, quarterProjects };
+  return { project, projects, people, subteams, quarters, allocations, cyclePeople, cycleProjects };
 }
 
 export async function getHomePageData() {
-  const [people, subteams, projects, quarters, allocations, quarterPeople] = await Promise.all([
+  const [people, subteams, projects, quarters, allocations, cyclePeople] = await Promise.all([
     db.people.toArray(),
     db.subteams.toArray(),
     db.projects.where('status').equals('Active').toArray(),
-    listResolvedQuarters(),
+    listResolvedCycles(),
     db.allocations.toArray(),
-    db.quarterPeople.toArray(),
+    db.cyclePeople.toArray(),
   ]);
-  return { people, subteams, projects, quarters, allocations, quarterPeople };
+  return { people, subteams, projects, quarters, allocations, cyclePeople };
 }
 
 export async function getProjectsPageData() {
-  const [projects, people, allocations, quarters, quarterPeople] = await Promise.all([
+  const [projects, people, allocations, quarters, cyclePeople] = await Promise.all([
     db.projects.orderBy('name').toArray(),
     db.people.toArray(),
     db.allocations.toArray(),
-    listResolvedQuarters(),
-    db.quarterPeople.toArray(),
+    listResolvedCycles(),
+    db.cyclePeople.toArray(),
   ]);
-  return { projects, people, allocations, quarters, quarterPeople };
+  return { projects, people, allocations, quarters, cyclePeople };
 }
 
 export async function createProject(params: {
@@ -402,17 +477,33 @@ export async function createProject(params: {
 export async function deleteProjectCascade(projectId: string, subteamId: string | null) {
   await db.transaction(
     'rw',
-    [db.projects, db.allocations, db.quarterProjects, db.subteams],
+    [db.projects, db.allocations, db.cycleProjects, db.subteams, db.people, db.cyclePeople],
     async () => {
       await db.allocations.bulkDelete(
         (await db.allocations.where('projectId').equals(projectId).toArray()).map((row) => row.id),
       );
-      await db.quarterProjects.bulkDelete(
-        (await db.quarterProjects.where('projectId').equals(projectId).toArray()).map((row) => row.id),
+      await db.cycleProjects.bulkDelete(
+        (await db.cycleProjects.where('projectId').equals(projectId).toArray()).map((row) => row.id),
       );
 
       if (subteamId) {
-        await db.subteams.delete(subteamId);
+        const remainingProjects = await db.projects.where('subteamId').equals(subteamId).toArray();
+        const shouldDeleteSubteam = remainingProjects.every((project) => project.id === projectId);
+        if (shouldDeleteSubteam) {
+          const [people, cyclePeople] = await Promise.all([
+            db.people.where('subteamId').equals(subteamId).toArray(),
+            db.cyclePeople.where('subteamId').equals(subteamId).toArray(),
+          ]);
+
+          if (people.length > 0) {
+            await db.people.bulkPut(people.map((person) => ({ ...person, subteamId: null })));
+          }
+          if (cyclePeople.length > 0) {
+            await db.cyclePeople.bulkPut(cyclePeople.map((entry) => ({ ...entry, subteamId: null })));
+          }
+
+          await db.subteams.delete(subteamId);
+        }
       }
 
       await db.projects.delete(projectId);
@@ -436,28 +527,55 @@ export async function updateProjectTags(projectId: string, rawTags: string) {
   await db.projects.update(projectId, { tags: parseProjectTagsInput(rawTags) });
 }
 
+export async function updateProjectSubteam(projectId: string, subteamId: string) {
+  const [project, projects, allocations, quarters] = await Promise.all([
+    db.projects.get(projectId),
+    db.projects.toArray(),
+    db.allocations.toArray(),
+    listResolvedCycles(),
+  ]);
+  if (!project) return;
+
+  const activeCycle = quarters.find((q) => q.status === 'active') ?? null;
+  const patchedProject = { ...project, subteamId };
+
+  const newAllocations = planSyncProjectToSubteamRoster({
+    allocations,
+    createId: uid,
+    project: patchedProject,
+    projects,
+    quarter: activeCycle,
+  });
+  const allocationsToCreate = filterNewAllocationInserts(allocations, newAllocations);
+
+  await db.transaction('rw', [db.projects, db.allocations], async () => {
+    await db.projects.update(projectId, { subteamId });
+    if (allocationsToCreate.length > 0) await db.allocations.bulkAdd(allocationsToCreate);
+  });
+}
+
 export async function addProjectMember(params: {
-  activeQuarter: Quarter | null;
+  activeCycle: Cycle | null;
   allocations: Awaited<ReturnType<typeof getProjectPageData>>['allocations'];
   personId: string;
   people: Awaited<ReturnType<typeof getProjectPageData>>['people'];
   percentage: number;
   project: NonNullable<Awaited<ReturnType<typeof getProjectPageData>>['project']>;
   projects: Awaited<ReturnType<typeof getProjectPageData>>['projects'];
-  quarterPeople: Awaited<ReturnType<typeof getProjectPageData>>['quarterPeople'];
+  cyclePeople: Awaited<ReturnType<typeof getProjectPageData>>['cyclePeople'];
   role: Role;
 }) {
-  const { activeQuarter, allocations, personId, people, percentage, project, projects, quarterPeople, role } = params;
+  const { activeCycle, allocations, personId, people, percentage, project, projects, cyclePeople, role } = params;
   const person = people.find((entry) => entry.id === personId);
-  const quarterPerson = activeQuarter
-    ? quarterPeople.find((entry) => entry.personId === personId && entry.quarterId === activeQuarter.id)
+  const cyclePerson = activeCycle
+    ? cyclePeople.find((entry) => entry.personId === personId && entry.cycleId === activeCycle.id)
     : undefined;
   const clampedPercentage = person && personTracksCapacity(role)
     ? clampProjectAllocationPercentage({
       person,
       projectId: project.id,
-      quarterPerson,
-      quarterId: activeQuarter?.id ?? null,
+      cyclePerson,
+      cycleId: activeCycle?.id ?? null,
       allocations,
       requestedPercentage: percentage,
     })
@@ -471,7 +589,7 @@ export async function addProjectMember(params: {
       percentage: clampedPercentage,
       project,
       projects,
-      quarter: activeQuarter,
+      quarter: activeCycle,
     });
     await db.transaction('rw', [db.subteams, db.projects, db.allocations], async () => {
       if (plan.subteamToCreate) await db.subteams.add(plan.subteamToCreate);
@@ -482,6 +600,7 @@ export async function addProjectMember(params: {
   }
 
   if (role === 'Engineer') {
+    if (!hasActiveDriForProjectSubteam(allocations, project, projects)) return;
     const plan = planAddPersonToProjectSubteam({
       allocations,
       createId: uid,
@@ -489,7 +608,7 @@ export async function addProjectMember(params: {
       percentage: clampedPercentage,
       project,
       projects,
-      quarter: activeQuarter,
+      quarter: activeCycle,
       role: 'Engineer',
     });
     await db.transaction('rw', [db.subteams, db.projects, db.allocations], async () => {
@@ -500,16 +619,18 @@ export async function addProjectMember(params: {
     return;
   }
 
-  await db.allocations.add({
+  const allocationToAdd: Allocation = {
     id: uid(),
-    quarterId: activeQuarter?.id ?? null,
+    cycleId: activeCycle?.id ?? null,
     projectId: project.id,
     personId,
     role,
-    startDate: activeQuarter?.startDate ?? todayDate(),
+    startDate: activeCycle?.startDate ?? todayDate(),
     endDate: null,
     percentage: 0,
-  });
+  };
+  if (filterNewAllocationInserts(allocations, [allocationToAdd]).length === 0) return;
+  await db.allocations.add(allocationToAdd);
 }
 
 export async function removeProjectMember(params: {
@@ -561,18 +682,18 @@ export async function removeProjectLink(project: NonNullable<Awaited<ReturnType<
 }
 
 export async function addProjectUnknown(params: {
-  activeQuarter: Quarter;
+  activeCycle: Cycle;
   description: string;
   project: NonNullable<Awaited<ReturnType<typeof getProjectPageData>>['project']>;
   title: string;
 }) {
-  const { activeQuarter, description, project, title } = params;
+  const { activeCycle, description, project, title } = params;
   await db.projects.update(project.id, {
     unknowns: [
       ...project.unknowns,
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: title.trim(),
         description: description.trim(),
         resolved: false,
@@ -594,20 +715,20 @@ export async function toggleProjectUnknownResolved(project: NonNullable<Awaited<
 }
 
 export async function addProjectRisk(params: {
-  activeQuarter: Quarter;
+  activeCycle: Cycle;
   impact: RiskImpact;
   likelihood: RiskLikelihood;
   mitigationNote: string;
   project: NonNullable<Awaited<ReturnType<typeof getProjectPageData>>['project']>;
   title: string;
 }) {
-  const { activeQuarter, impact, likelihood, mitigationNote, project, title } = params;
+  const { activeCycle, impact, likelihood, mitigationNote, project, title } = params;
   await db.projects.update(project.id, {
     risks: [
       ...project.risks,
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: title.trim(),
         likelihood,
         impact,
@@ -647,15 +768,15 @@ export async function updateProjectMemberAllocationPercentage(params: {
   if (activeDeliveryAllocations.length === 0) return;
   const person = await db.people.get(personId);
   if (!person || !personTracksCapacity(person.role)) return;
-  const quarterId = activeDeliveryAllocations[0]?.quarterId ?? null;
-  const quarterPerson = quarterId
-    ? await db.quarterPeople.where({ quarterId, personId }).first()
+  const cycleId = activeDeliveryAllocations[0]?.cycleId ?? null;
+  const cyclePerson = cycleId
+    ? await db.cyclePeople.where({ cycleId, personId }).first()
     : undefined;
   const clamped = clampProjectAllocationPercentage({
     person,
     projectId,
-    quarterPerson,
-    quarterId,
+    cyclePerson,
+    cycleId,
     allocations,
     requestedPercentage: percentage,
   });
@@ -672,18 +793,18 @@ export function getProjectMemberAllocationMax(params: {
   allocations: Awaited<ReturnType<typeof getProjectPageData>>['allocations'];
   person: Awaited<ReturnType<typeof getProjectPageData>>['people'][number];
   projectId: string;
-  quarterId?: string | null;
-  quarterPeople?: Awaited<ReturnType<typeof getProjectPageData>>['quarterPeople'];
+  cycleId?: string | null;
+  cyclePeople?: Awaited<ReturnType<typeof getProjectPageData>>['cyclePeople'];
 }) {
-  const { allocations, person, projectId, quarterId, quarterPeople = [] } = params;
-  const quarterPerson = quarterId
-    ? quarterPeople.find((entry) => entry.personId === person.id && entry.quarterId === quarterId)
+  const { allocations, person, projectId, cycleId, cyclePeople = [] } = params;
+  const cyclePerson = cycleId
+    ? cyclePeople.find((entry) => entry.personId === person.id && entry.cycleId === cycleId)
     : undefined;
   return getMaxProjectAllocationPercentage({
     person,
     projectId,
-    quarterPerson,
-    quarterId,
+    cyclePerson,
+    cycleId,
     allocations,
   });
 }

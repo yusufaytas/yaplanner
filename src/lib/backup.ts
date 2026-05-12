@@ -3,7 +3,7 @@ import type { Table } from 'dexie';
 
 export const TABLES = [
   'people', 'subteams', 'projects',
-  'quarters', 'quarterProjects', 'quarterPeople',
+  'cycles', 'cycleProjects', 'cyclePeople',
   'allocations',
 ] as const;
 

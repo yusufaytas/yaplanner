@@ -4,65 +4,65 @@ import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
-import { getQuarterPeopleLists } from '@/lib/quarter-people';
-import { getQuarterPersonProjectSummary } from '@/lib/person-capacity';
-import { addPersonToQuarter, getQuarterPeoplePageData, removePersonFromQuarter, updateQuarterPerson } from '@/lib/quarters';
+import { getCyclePeopleLists } from '@/lib/cycle-people';
+import { getCyclePersonProjectSummary } from '@/lib/person-capacity';
+import { addPersonToCycle, getCyclePeoplePageData, removePersonFromCycle, updateCyclePerson } from '@/lib/cycles';
 
 function uid() { return crypto.randomUUID(); }
 
-export default function QuarterPeopleClient() {
-  const { quarterId } = useParams<{ quarterId: string }>();
+export default function CyclePeopleClient() {
+  const { cycleId } = useParams<{ cycleId: string }>();
   const [search, setSearch] = useState('');
 
-  const data = useLiveQuery(() => getQuarterPeoplePageData(quarterId), [quarterId]);
+  const data = useLiveQuery(() => getCyclePeoplePageData(cycleId), [cycleId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
-  if (!data.quarter) return <div className="text-sm text-zinc-400">Quarter not found.</div>;
+  if (!data.quarter) return <div className="text-sm text-zinc-400">Cycle not found.</div>;
 
-  const { quarter, people, subteams, quarterPeople, allocations } = data;
+  const { quarter, people, subteams, cyclePeople, allocations } = data;
   const subteamById = new Map(subteams.map((s) => [s.id, s]));
-  const { inQuarter, sortedInQuarter: sorted, notInQuarter, filteredNotInQuarter, quarterPersonByPersonId } =
-    getQuarterPeopleLists(people, quarterPeople, search);
+  const { inCycle, sortedInCycle: sorted, notInCycle, filteredNotInCycle, cyclePersonByPersonId } =
+    getCyclePeopleLists(people, cyclePeople, search);
 
-  async function addToQuarter(personId: string) {
-    await addPersonToQuarter({
+  async function addToCycle(personId: string) {
+    await addPersonToCycle({
       id: uid(),
-      quarterId,
+      cycleId,
       personId,
       subteamId: people.find((p) => p.id === personId)?.subteamId ?? null,
-      quarterCapacity: people.find((p) => p.id === personId)?.defaultCapacity ?? 100,
+      cycleCapacity: people.find((p) => p.id === personId)?.defaultCapacity ?? 100,
     });
   }
 
-  async function removeFromQuarter(personId: string) {
-    const qp = quarterPersonByPersonId.get(personId);
-    if (qp) await removePersonFromQuarter(qp.id);
+  async function removeFromCycle(personId: string) {
+    const qp = cyclePersonByPersonId.get(personId);
+    if (qp) await removePersonFromCycle(qp.id);
   }
 
   async function toggleInactive(personId: string) {
-    const qp = quarterPersonByPersonId.get(personId);
-    if (qp) await updateQuarterPerson(qp.id, { inactive: !qp.inactive });
+    const qp = cyclePersonByPersonId.get(personId);
+    if (qp) await updateCyclePerson(qp.id, { inactive: !qp.inactive });
   }
 
   return (
     <div className="space-y-6">
 
-      {/* ── People in this quarter ── */}
+      {/* ── People in this cycle ── */}
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-200">
-            In quarter
-            <span className="ml-2 font-normal text-zinc-500">({inQuarter.length})</span>
+            In cycle
+            <span className="ml-2 font-normal text-zinc-500">({inCycle.length})</span>
           </h2>
         </div>
 
-        {inQuarter.length === 0 ? (
-          <p className="text-sm text-zinc-600 italic">No people added to this quarter yet.</p>
+        {inCycle.length === 0 ? (
+          <p className="text-sm text-zinc-600 italic">No people added to this cycle yet.</p>
         ) : (
           <div className="divide-y divide-white/5">
             {sorted.map((person) => {
-              const qp = quarterPersonByPersonId.get(person.id)!;
-              const summary = getQuarterPersonProjectSummary(quarter, person, qp, allocations);
+              const qp = cyclePersonByPersonId.get(person.id)!;
+              const summary = getCyclePersonProjectSummary(quarter, person, qp, allocations);
               const subteam = subteamById.get(qp.subteamId ?? person.subteamId ?? '');
               return (
                 <div key={person.id} className={`flex items-center gap-3 py-2.5 first:pt-0 last:pb-0 ${qp.inactive ? 'opacity-40' : ''}`}>
@@ -111,9 +111,9 @@ export default function QuarterPeopleClient() {
 
                   {/* remove */}
                   <button
-                    onClick={() => removeFromQuarter(person.id)}
+                    onClick={() => removeFromCycle(person.id)}
                     className="shrink-0 text-zinc-700 hover:text-rose-400 text-xs transition-colors"
-                    title="Remove from quarter"
+                    title="Remove from cycle"
                   >✕</button>
                 </div>
               );
@@ -123,7 +123,7 @@ export default function QuarterPeopleClient() {
       </section>
 
       {/* ── Add people ── */}
-      {notInQuarter.length > 0 && (
+      {notInCycle.length > 0 && (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
           <h2 className="text-sm font-semibold text-zinc-200">Add people</h2>
 
@@ -134,11 +134,11 @@ export default function QuarterPeopleClient() {
             className="w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
           />
 
-          {filteredNotInQuarter.length === 0 ? (
+          {filteredNotInCycle.length === 0 ? (
             <p className="text-sm text-zinc-600 italic">No people match.</p>
           ) : (
             <div className="divide-y divide-white/5">
-              {filteredNotInQuarter.map((person) => {
+              {filteredNotInCycle.map((person) => {
                 const subteam = subteamById.get(person.subteamId ?? '');
                 return (
                   <div key={person.id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
@@ -148,7 +148,7 @@ export default function QuarterPeopleClient() {
                       {subteam && <span className="ml-2 text-xs text-zinc-600">· {subteam.name}</span>}
                     </div>
                     <button
-                      onClick={() => addToQuarter(person.id)}
+                      onClick={() => addToCycle(person.id)}
                       className="shrink-0 rounded bg-sky-600/80 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 transition-colors"
                     >
                       + Add

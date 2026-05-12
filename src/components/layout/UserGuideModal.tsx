@@ -73,16 +73,16 @@ export function UserGuideModal() {
                 </Rule>
                 <Rule>
                   <strong className="text-zinc-100">People, subteams, and projects</strong> are global — they persist
-                  across quarters. <strong className="text-zinc-100">Quarters</strong> are planning lenses: capacity,
-                  allocations, and health signals are all quarter-scoped.
+                  across cycles. <strong className="text-zinc-100">Cycles</strong> are planning lenses: capacity,
+                  allocations, and health signals are all cycle-scoped.
                 </Rule>
               </Section>
 
               {/* Getting started */}
               <Section title="Getting started">
                 <Rule>1. Create your <strong className="text-zinc-100">People</strong> and assign each a role (Engineer, EM, PM).</Rule>
-                <Rule>2. Create a <strong className="text-zinc-100">Quarter</strong> with a start and end date, then add people to it via the quarter&apos;s People tab.</Rule>
-                <Rule>3. Create <strong className="text-zinc-100">Projects</strong> and add them to the quarter via the portfolio dashboard.</Rule>
+                <Rule>2. Create a <strong className="text-zinc-100">Cycle</strong> with a start and end date, then add people to it via the cycle&apos;s People tab.</Rule>
+                <Rule>3. Create <strong className="text-zinc-100">Projects</strong> and add them to the cycle via the portfolio dashboard.</Rule>
                 <Rule>4. On each project page, assign a <strong className="text-zinc-100">DRI</strong> first, then add Engineers and other roles.</Rule>
                 <Rule>5. Set capacity allocations per engineer and an estimated person-weeks budget per project.</Rule>
               </Section>
@@ -115,7 +115,7 @@ export function UserGuideModal() {
               <Section title="Capacity planning">
                 <Rule>
                   Each person has a <strong className="text-zinc-100">default capacity</strong> (100% by default).
-                  This can be overridden per quarter on the capacity planning page.
+                  This can be overridden per cycle on the capacity planning page.
                 </Rule>
                 <Rule>
                   <strong className="text-zinc-100">Overhead items</strong> reduce available capacity. They compound
@@ -123,8 +123,8 @@ export function UserGuideModal() {
                   10.2 available person-weeks, not 13 × (1 − 0.23).
                 </Rule>
                 <Rule>
-                  Overhead can be set at the quarter level (applies to everyone) or overridden per person. A
-                  person-level override <em>replaces</em> the quarter defaults entirely — it doesn&apos;t add to them.
+                  Overhead can be set at the cycle level (applies to everyone) or overridden per person. A
+                  person-level override <em>replaces</em> the cycle defaults entirely — it doesn&apos;t add to them.
                 </Rule>
                 <Rule>
                   <strong className="text-zinc-100">Allocation</strong> is a weekly percentage per engineer per project.
@@ -134,7 +134,7 @@ export function UserGuideModal() {
                   A DRI who is also an Engineer has a minimum allocation of <strong className="text-zinc-100">50%</strong> on that project.
                 </Rule>
                 <Rule>
-                  Only engineers with a QuarterPerson record, not marked inactive, and with remaining capacity &gt; 0
+                  Only engineers with a cycle person record, not marked inactive, and with remaining capacity &gt; 0
                   appear in the assignment dropdown.
                 </Rule>
               </Section>
@@ -159,7 +159,7 @@ export function UserGuideModal() {
               {/* Portfolio */}
               <Section title="Portfolio dashboard">
                 <Rule>
-                  The quarter&apos;s portfolio view shows all projects in priority order. Drag to reorder.
+                  The cycle&apos;s portfolio view shows all projects in priority order. Drag to reorder.
                 </Rule>
                 <Rule>
                   The <strong className="text-zinc-100">capacity line</strong> is an optional marker you can set to

@@ -5,10 +5,10 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
-import type { QuarterStatus } from '@/lib/types';
-import { createQuarter as createQuarterRecord, getQuartersPageData, suggestNextQuarter, updateQuarterDraftEndDate, updateQuarterDraftStartDate } from '@/lib/quarters';
+import type { CycleStatus } from '@/lib/types';
+import { createCycle as createCycleRecord, getCyclesPageData, suggestNextCycle, updateCycleDraftEndDate, updateCycleDraftStartDate } from '@/lib/cycles';
 
-const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'warning' | 'neutral'> = {
+const statusVariant: Record<CycleStatus, 'success' | 'info' | 'warning' | 'neutral'> = {
   active: 'success',
   draft: 'info',
   closed: 'warning',
@@ -17,8 +17,8 @@ const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'warning' | 'neu
 
 function uid() { return crypto.randomUUID(); }
 
-export default function QuartersPage() {
-  const quarters = useLiveQuery(() => getQuartersPageData());
+export default function CyclesPage() {
+  const quarters = useLiveQuery(() => getCyclesPageData());
 
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -27,11 +27,11 @@ export default function QuartersPage() {
   const [endDateManuallyEdited, setEndDateManuallyEdited] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  async function createQuarterHandler() {
+  async function createCycleHandler() {
     if (!name.trim() || !startDate || !endDate) return;
     setSaving(true);
     try {
-      await createQuarterRecord({ id: uid(), name, startDate, endDate });
+      await createCycleRecord({ id: uid(), name, startDate, endDate });
       setAdding(false);
       setName('');
       setStartDate('');
@@ -57,12 +57,12 @@ export default function QuartersPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-zinc-50">Quarters</h1>
+        <h1 className="text-2xl font-bold text-zinc-50">Cycles</h1>
         {!adding && (
           <button
             onClick={() => {
               if (quarters.length > 0) {
-                const suggestion = suggestNextQuarter(quarters[0]);
+                const suggestion = suggestNextCycle(quarters[0]);
                 setName(suggestion.name);
                 setStartDate(suggestion.startDate);
                 setEndDate(suggestion.endDate);
@@ -72,7 +72,7 @@ export default function QuartersPage() {
             }}
             className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:border-sky-400/30 hover:bg-white/8"
           >
-            + New quarter
+            + New cycle
           </button>
         )}
       </div>
@@ -84,7 +84,7 @@ export default function QuartersPage() {
             placeholder="Name — e.g. 2026-Q4"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') createQuarterHandler(); if (e.key === 'Escape') cancel(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') createCycleHandler(); if (e.key === 'Escape') cancel(); }}
             className={`${inputCls} w-36`}
           />
           <div className="flex items-center gap-1.5">
@@ -93,7 +93,7 @@ export default function QuartersPage() {
               type="date"
               value={startDate}
               onChange={(e) => {
-                const nextDraft = updateQuarterDraftStartDate(
+                const nextDraft = updateCycleDraftStartDate(
                   { startDate, endDate, endDateManuallyEdited },
                   e.target.value,
                 );
@@ -110,7 +110,7 @@ export default function QuartersPage() {
               type="date"
               value={endDate}
               onChange={(e) => {
-                const nextDraft = updateQuarterDraftEndDate(
+                const nextDraft = updateCycleDraftEndDate(
                   { startDate, endDate, endDateManuallyEdited },
                   e.target.value,
                 );
@@ -122,7 +122,7 @@ export default function QuartersPage() {
             />
           </div>
           <button
-            onClick={createQuarterHandler}
+            onClick={createCycleHandler}
             disabled={!name.trim() || !startDate || !endDate || saving}
             className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -133,13 +133,13 @@ export default function QuartersPage() {
       )}
 
       {quarters.length === 0 && !adding ? (
-        <EmptyState title="No quarters yet" description="Create a quarter to start planning." />
+        <EmptyState title="No cycles yet" description="Create a cycle to start planning." />
       ) : (
         <div className="space-y-2">
           {quarters.map((q) => (
             <Link
               key={q.id}
-              href={`/quarters/${q.id}`}
+              href={`/cycles/${q.id}`}
               className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4 hover:border-sky-400/30 hover:bg-white/[0.07]"
             >
               <div>

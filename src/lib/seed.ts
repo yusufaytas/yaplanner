@@ -5,9 +5,9 @@ import type {
   CapacityOverhead,
   Person,
   Project,
-  Quarter,
-  QuarterPerson,
-  QuarterProject,
+  Cycle,
+  CyclePerson,
+  CycleProject,
   Role,
   Subteam,
 } from './types';
@@ -52,16 +52,16 @@ function makePerson(params: {
   };
 }
 
-function makeQuarter(params: {
+function makeCycle(params: {
   name: string;
   startDate: string;
   endDate: string;
-  status: Quarter['status'];
+  status: Cycle['status'];
   createdAt: string;
   capacityLineAfter: number | null;
-  createdFromQuarterId?: string | null;
+  createdFromCycleId?: string | null;
   overhead?: CapacityOverhead;
-}): Quarter {
+}): Cycle {
   return {
     id: uid(),
     name: params.name,
@@ -69,7 +69,7 @@ function makeQuarter(params: {
     endDate: params.endDate,
     status: params.status,
     createdAt: params.createdAt,
-    createdFromQuarterId: params.createdFromQuarterId ?? null,
+    createdFromCycleId: params.createdFromCycleId ?? null,
     capacityLineAfter: params.capacityLineAfter,
     overhead: params.overhead ?? cloneDefaultOverhead(),
   };
@@ -102,27 +102,27 @@ function makeProject(params: {
   };
 }
 
-function makeQuarterPerson(params: {
-  quarterId: string;
+function makeCyclePerson(params: {
+  cycleId: string;
   person: Person;
   subteamId?: string | null;
   inactive?: boolean;
-  quarterCapacity?: number;
+  cycleCapacity?: number;
   overheadOverride?: CapacityOverhead | null;
-}): QuarterPerson {
+}): CyclePerson {
   return {
     id: uid(),
-    quarterId: params.quarterId,
+    cycleId: params.cycleId,
     personId: params.person.id,
     subteamId: params.subteamId ?? params.person.subteamId,
     inactive: params.inactive ?? false,
-    quarterCapacity: params.quarterCapacity ?? params.person.defaultCapacity,
+    cycleCapacity: params.cycleCapacity ?? params.person.defaultCapacity,
     overheadOverride: params.overheadOverride ?? null,
   };
 }
 
-function makeQuarterProject(params: {
-  quarterId: string;
+function makeCycleProject(params: {
+  cycleId: string;
   project: Project;
   priority: number;
   estimatedPersonWeeks: number | null;
@@ -131,10 +131,10 @@ function makeQuarterProject(params: {
   plannedEndWeek?: string | null;
   targetMilestone?: string | null;
   status?: Project['status'];
-}): QuarterProject {
+}): CycleProject {
   return {
     id: uid(),
-    quarterId: params.quarterId,
+    cycleId: params.cycleId,
     projectId: params.project.id,
     status: params.status ?? params.project.status,
     priority: params.priority,
@@ -147,7 +147,7 @@ function makeQuarterProject(params: {
 }
 
 function makeAllocation(params: {
-  quarterId: string | null;
+  cycleId: string | null;
   projectId: string;
   personId: string;
   role: Role;
@@ -157,7 +157,7 @@ function makeAllocation(params: {
 }): Allocation {
   return {
     id: uid(),
-    quarterId: params.quarterId,
+    cycleId: params.cycleId,
     projectId: params.projectId,
     personId: params.personId,
     role: params.role,
@@ -168,7 +168,7 @@ function makeAllocation(params: {
 }
 
 export async function seedSampleData(): Promise<void> {
-  if (await db.quarters.count()) return;
+  if (await db.cycles.count()) return;
 
   const now = new Date().toISOString();
 
@@ -206,7 +206,7 @@ export async function seedSampleData(): Promise<void> {
   ];
   await db.people.bulkAdd(people);
 
-  const closedQuarter = makeQuarter({
+  const closedCycle = makeCycle({
     name: '2026-Q1',
     startDate: '2026-01-01',
     endDate: '2026-03-31',
@@ -214,25 +214,25 @@ export async function seedSampleData(): Promise<void> {
     createdAt: now,
     capacityLineAfter: 1,
   });
-  const activeQuarter = makeQuarter({
+  const activeCycle = makeCycle({
     name: '2026-Q2',
     startDate: '2026-04-01',
     endDate: '2026-06-30',
     status: 'active',
     createdAt: now,
     capacityLineAfter: 3,
-    createdFromQuarterId: closedQuarter.id,
+    createdFromCycleId: closedCycle.id,
   });
-  const draftQuarter = makeQuarter({
+  const draftCycle = makeCycle({
     name: '2026-Q3',
     startDate: '2026-07-01',
     endDate: '2026-09-30',
     status: 'draft',
     createdAt: now,
     capacityLineAfter: null,
-    createdFromQuarterId: activeQuarter.id,
+    createdFromCycleId: activeCycle.id,
   });
-  await db.quarters.bulkAdd([closedQuarter, activeQuarter, draftQuarter]);
+  await db.cycles.bulkAdd([closedCycle, activeCycle, draftCycle]);
 
   const mercury = makeProject({
     name: 'Project Mercury',
@@ -248,7 +248,7 @@ export async function seedSampleData(): Promise<void> {
     unknowns: [
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: 'Migration plan gap',
         description: 'Need a tested rollback runbook before traffic cutover.',
         resolved: false,
@@ -257,7 +257,7 @@ export async function seedSampleData(): Promise<void> {
       },
       {
         id: uid(),
-        quarterId: closedQuarter.id,
+        cycleId: closedCycle.id,
         title: 'Gateway rate limits',
         description: 'Initial concern about provider throttling was closed after load testing.',
         resolved: true,
@@ -268,7 +268,7 @@ export async function seedSampleData(): Promise<void> {
     risks: [
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: 'Rollback complexity',
         likelihood: 'Medium',
         impact: 'High',
@@ -298,7 +298,7 @@ export async function seedSampleData(): Promise<void> {
     risks: [
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: 'Warehouse cutover risk',
         likelihood: 'High',
         impact: 'High',
@@ -319,7 +319,7 @@ export async function seedSampleData(): Promise<void> {
     unknowns: [
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: 'Sampling strategy',
         description: 'Still need product sign-off on the event retention and sampling policy.',
         resolved: false,
@@ -339,7 +339,7 @@ export async function seedSampleData(): Promise<void> {
     unknowns: [
       {
         id: uid(),
-        quarterId: closedQuarter.id,
+        cycleId: closedCycle.id,
         title: 'Native module performance',
         description: 'Profiling concern was resolved after replacing the image pipeline.',
         resolved: true,
@@ -350,7 +350,7 @@ export async function seedSampleData(): Promise<void> {
     risks: [
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: 'App store review timing',
         likelihood: 'Low',
         impact: 'Medium',
@@ -371,7 +371,7 @@ export async function seedSampleData(): Promise<void> {
     unknowns: [
       {
         id: uid(),
-        quarterId: activeQuarter.id,
+        cycleId: activeCycle.id,
         title: 'Analytics owner',
         description: 'Waiting for the growth leadership decision on experiment metrics ownership.',
         resolved: false,
@@ -409,18 +409,18 @@ export async function seedSampleData(): Promise<void> {
     legacyBilling,
   ]);
 
-  const activeQuarterPeople: QuarterPerson[] = [
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: alice, quarterCapacity: 70 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: priya, quarterCapacity: 80 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: kai }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: mateo }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: ben, subteamId: stPlatform.id, quarterCapacity: 90 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: cem, subteamId: stPlatform.id, quarterCapacity: 100 }),
-    makeQuarterPerson({
-      quarterId: activeQuarter.id,
+  const activeCyclePeople: CyclePerson[] = [
+    makeCyclePerson({ cycleId: activeCycle.id, person: alice, cycleCapacity: 70 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: priya, cycleCapacity: 80 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: kai }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: mateo }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: ben, subteamId: stPlatform.id, cycleCapacity: 90 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: cem, subteamId: stPlatform.id, cycleCapacity: 100 }),
+    makeCyclePerson({
+      cycleId: activeCycle.id,
       person: leila,
       subteamId: stPlatform.id,
-      quarterCapacity: 60,
+      cycleCapacity: 60,
       overheadOverride: {
         items: [
           { id: 'pto', label: 'PTO', type: 'weeks', value: 1.5 },
@@ -428,16 +428,16 @@ export async function seedSampleData(): Promise<void> {
         ],
       },
     }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: farah, subteamId: stData.id, quarterCapacity: 80 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: imani, subteamId: stData.id, quarterCapacity: 70 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: jonah, subteamId: stData.id, quarterCapacity: 50 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: tanner, subteamId: stData.id, inactive: true, quarterCapacity: 70 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: nia, subteamId: stFrontend.id, quarterCapacity: 85 }),
-    makeQuarterPerson({
-      quarterId: activeQuarter.id,
+    makeCyclePerson({ cycleId: activeCycle.id, person: farah, subteamId: stData.id, cycleCapacity: 80 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: imani, subteamId: stData.id, cycleCapacity: 70 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: jonah, subteamId: stData.id, cycleCapacity: 50 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: tanner, subteamId: stData.id, inactive: true, cycleCapacity: 70 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: nia, subteamId: stFrontend.id, cycleCapacity: 85 }),
+    makeCyclePerson({
+      cycleId: activeCycle.id,
       person: omar,
       subteamId: stFrontend.id,
-      quarterCapacity: 80,
+      cycleCapacity: 80,
       overheadOverride: {
         items: [
           { id: 'meetings', label: 'Meetings', type: 'pct', value: 12 },
@@ -445,124 +445,124 @@ export async function seedSampleData(): Promise<void> {
         ],
       },
     }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: zoya, subteamId: stFrontend.id, quarterCapacity: 40 }),
-    makeQuarterPerson({ quarterId: activeQuarter.id, person: greta, subteamId: stGrowth.id, quarterCapacity: 100 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: zoya, subteamId: stFrontend.id, cycleCapacity: 40 }),
+    makeCyclePerson({ cycleId: activeCycle.id, person: greta, subteamId: stGrowth.id, cycleCapacity: 100 }),
   ];
 
-  const closedQuarterPeople: QuarterPerson[] = [
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: alice, quarterCapacity: 80 }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: kai }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: ben, subteamId: stPlatform.id }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: cem, subteamId: stPlatform.id }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: leila, subteamId: stPlatform.id, quarterCapacity: 70 }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: quinn, subteamId: stPlatform.id }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: farah, subteamId: stData.id }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: imani, subteamId: stData.id, quarterCapacity: 70 }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: nia, subteamId: stFrontend.id }),
-    makeQuarterPerson({ quarterId: closedQuarter.id, person: omar, subteamId: stFrontend.id, quarterCapacity: 80 }),
+  const closedCyclePeople: CyclePerson[] = [
+    makeCyclePerson({ cycleId: closedCycle.id, person: alice, cycleCapacity: 80 }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: kai }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: ben, subteamId: stPlatform.id }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: cem, subteamId: stPlatform.id }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: leila, subteamId: stPlatform.id, cycleCapacity: 70 }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: quinn, subteamId: stPlatform.id }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: farah, subteamId: stData.id }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: imani, subteamId: stData.id, cycleCapacity: 70 }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: nia, subteamId: stFrontend.id }),
+    makeCyclePerson({ cycleId: closedCycle.id, person: omar, subteamId: stFrontend.id, cycleCapacity: 80 }),
   ];
-  await db.quarterPeople.bulkAdd([...closedQuarterPeople, ...activeQuarterPeople]);
+  await db.cyclePeople.bulkAdd([...closedCyclePeople, ...activeCyclePeople]);
 
-  const activeQuarterProjects: QuarterProject[] = [
-    makeQuarterProject({ quarterId: activeQuarter.id, project: mercury, priority: 0, estimatedPersonWeeks: 24, plannedStartWeek: activeQuarter.startDate, plannedEndWeek: activeQuarter.endDate, notes: 'Critical migration path for the platform roadmap.' }),
-    makeQuarterProject({
-      quarterId: activeQuarter.id,
+  const activeCycleProjects: CycleProject[] = [
+    makeCycleProject({ cycleId: activeCycle.id, project: mercury, priority: 0, estimatedPersonWeeks: 24, plannedStartWeek: activeCycle.startDate, plannedEndWeek: activeCycle.endDate, notes: 'Critical migration path for the platform roadmap.' }),
+    makeCycleProject({
+      cycleId: activeCycle.id,
       project: atlas,
       priority: 1,
       estimatedPersonWeeks: 16,
-      plannedStartWeek: activeQuarter.startDate,
-      plannedEndWeek: activeQuarter.endDate,
+      plannedStartWeek: activeCycle.startDate,
+      plannedEndWeek: activeCycle.endDate,
       notes: 'Clean sample project that goes at-risk only when shared delivery people exceed effective capacity.',
     }),
-    makeQuarterProject({ quarterId: activeQuarter.id, project: lakehouse, priority: 2, estimatedPersonWeeks: 20, plannedStartWeek: activeQuarter.startDate, plannedEndWeek: activeQuarter.endDate }),
-    makeQuarterProject({ quarterId: activeQuarter.id, project: realtime, priority: 3, estimatedPersonWeeks: 12, plannedStartWeek: activeQuarter.startDate, plannedEndWeek: activeQuarter.endDate }),
-    makeQuarterProject({ quarterId: activeQuarter.id, project: mobile, priority: 4, estimatedPersonWeeks: 14, plannedStartWeek: activeQuarter.startDate, plannedEndWeek: activeQuarter.endDate }),
-    makeQuarterProject({ quarterId: activeQuarter.id, project: experimentation, priority: 5, estimatedPersonWeeks: 6, plannedStartWeek: activeQuarter.startDate, plannedEndWeek: null, notes: 'Paused until growth leadership confirms scope.' }),
+    makeCycleProject({ cycleId: activeCycle.id, project: lakehouse, priority: 2, estimatedPersonWeeks: 20, plannedStartWeek: activeCycle.startDate, plannedEndWeek: activeCycle.endDate }),
+    makeCycleProject({ cycleId: activeCycle.id, project: realtime, priority: 3, estimatedPersonWeeks: 12, plannedStartWeek: activeCycle.startDate, plannedEndWeek: activeCycle.endDate }),
+    makeCycleProject({ cycleId: activeCycle.id, project: mobile, priority: 4, estimatedPersonWeeks: 14, plannedStartWeek: activeCycle.startDate, plannedEndWeek: activeCycle.endDate }),
+    makeCycleProject({ cycleId: activeCycle.id, project: experimentation, priority: 5, estimatedPersonWeeks: 6, plannedStartWeek: activeCycle.startDate, plannedEndWeek: null, notes: 'Paused until growth leadership confirms scope.' }),
   ];
-  const closedQuarterProjects: QuarterProject[] = [
-    makeQuarterProject({ quarterId: closedQuarter.id, project: legacyBilling, priority: 0, estimatedPersonWeeks: 10, plannedStartWeek: closedQuarter.startDate, plannedEndWeek: closedQuarter.endDate, targetMilestone: 'Billing sunset complete' }),
-    makeQuarterProject({
-      quarterId: closedQuarter.id,
+  const closedCycleProjects: CycleProject[] = [
+    makeCycleProject({ cycleId: closedCycle.id, project: legacyBilling, priority: 0, estimatedPersonWeeks: 10, plannedStartWeek: closedCycle.startDate, plannedEndWeek: closedCycle.endDate, targetMilestone: 'Billing sunset complete' }),
+    makeCycleProject({
+      cycleId: closedCycle.id,
       project: mercury,
       priority: 1,
       estimatedPersonWeeks: 14,
-      plannedStartWeek: closedQuarter.startDate,
-      plannedEndWeek: closedQuarter.endDate,
+      plannedStartWeek: closedCycle.startDate,
+      plannedEndWeek: closedCycle.endDate,
       status: 'Complete',
       notes: 'Gateway migration phase 1 completed last quarter; Q2 continues with the next cutover phase.',
       targetMilestone: 'Phase 1 complete',
     }),
-    makeQuarterProject({
-      quarterId: closedQuarter.id,
+    makeCycleProject({
+      cycleId: closedCycle.id,
       project: mobile,
       priority: 2,
       estimatedPersonWeeks: 9,
-      plannedStartWeek: closedQuarter.startDate,
-      plannedEndWeek: closedQuarter.endDate,
+      plannedStartWeek: closedCycle.startDate,
+      plannedEndWeek: closedCycle.endDate,
       status: 'Complete',
       notes: 'The first mobile redesign milestone shipped in Q1 before the Q2 expansion work.',
       targetMilestone: 'V2 milestone 1 shipped',
     }),
   ];
-  await db.quarterProjects.bulkAdd([...closedQuarterProjects, ...activeQuarterProjects]);
+  await db.cycleProjects.bulkAdd([...closedCycleProjects, ...activeCycleProjects]);
 
   const allocations: Allocation[] = [
     // Closed quarter history
-    makeAllocation({ quarterId: closedQuarter.id, projectId: legacyBilling.id, personId: ben.id, role: 'DRI', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate, percentage: 55 }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: legacyBilling.id, personId: quinn.id, role: 'Engineer', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate, percentage: 45 }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: legacyBilling.id, personId: alice.id, role: 'EM', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: legacyBilling.id, personId: kai.id, role: 'PM', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: mercury.id, personId: ben.id, role: 'DRI', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate, percentage: 40 }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: mercury.id, personId: cem.id, role: 'Engineer', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate, percentage: 30 }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: mercury.id, personId: leila.id, role: 'Engineer', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate, percentage: 20 }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: mercury.id, personId: alice.id, role: 'EM', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: mercury.id, personId: kai.id, role: 'PM', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: mobile.id, personId: nia.id, role: 'DRI', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate, percentage: 45 }),
-    makeAllocation({ quarterId: closedQuarter.id, projectId: mobile.id, personId: omar.id, role: 'Engineer', startDate: closedQuarter.startDate, endDate: closedQuarter.endDate, percentage: 35 }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: legacyBilling.id, personId: ben.id, role: 'DRI', startDate: closedCycle.startDate, endDate: closedCycle.endDate, percentage: 55 }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: legacyBilling.id, personId: quinn.id, role: 'Engineer', startDate: closedCycle.startDate, endDate: closedCycle.endDate, percentage: 45 }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: legacyBilling.id, personId: alice.id, role: 'EM', startDate: closedCycle.startDate, endDate: closedCycle.endDate }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: legacyBilling.id, personId: kai.id, role: 'PM', startDate: closedCycle.startDate, endDate: closedCycle.endDate }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: mercury.id, personId: ben.id, role: 'DRI', startDate: closedCycle.startDate, endDate: closedCycle.endDate, percentage: 40 }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: mercury.id, personId: cem.id, role: 'Engineer', startDate: closedCycle.startDate, endDate: closedCycle.endDate, percentage: 30 }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: mercury.id, personId: leila.id, role: 'Engineer', startDate: closedCycle.startDate, endDate: closedCycle.endDate, percentage: 20 }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: mercury.id, personId: alice.id, role: 'EM', startDate: closedCycle.startDate, endDate: closedCycle.endDate }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: mercury.id, personId: kai.id, role: 'PM', startDate: closedCycle.startDate, endDate: closedCycle.endDate }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: mobile.id, personId: nia.id, role: 'DRI', startDate: closedCycle.startDate, endDate: closedCycle.endDate, percentage: 45 }),
+    makeAllocation({ cycleId: closedCycle.id, projectId: mobile.id, personId: omar.id, role: 'Engineer', startDate: closedCycle.startDate, endDate: closedCycle.endDate, percentage: 35 }),
 
     // Active Platform subteam: same roster across Mercury and Atlas, with history
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: ben.id, role: 'DRI', startDate: activeQuarter.startDate, endDate: '2026-04-14', percentage: 45 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: quinn.id, role: 'Engineer', startDate: activeQuarter.startDate, endDate: '2026-04-10', percentage: 20 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: alice.id, role: 'EM', startDate: activeQuarter.startDate, endDate: '2026-04-20' }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: mateo.id, role: 'PM', startDate: activeQuarter.startDate, endDate: '2026-04-12' }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: cem.id, role: 'DRI', startDate: '2026-04-15', percentage: 40 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: ben.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 40 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: leila.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 15 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: priya.id, role: 'EM', startDate: '2026-04-21' }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mercury.id, personId: kai.id, role: 'PM', startDate: '2026-04-13' }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: ben.id, role: 'DRI', startDate: activeCycle.startDate, endDate: '2026-04-14', percentage: 45 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: quinn.id, role: 'Engineer', startDate: activeCycle.startDate, endDate: '2026-04-10', percentage: 20 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: alice.id, role: 'EM', startDate: activeCycle.startDate, endDate: '2026-04-20' }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: mateo.id, role: 'PM', startDate: activeCycle.startDate, endDate: '2026-04-12' }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: cem.id, role: 'DRI', startDate: '2026-04-15', percentage: 40 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: ben.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 40 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: leila.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 15 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: priya.id, role: 'EM', startDate: '2026-04-21' }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mercury.id, personId: kai.id, role: 'PM', startDate: '2026-04-13' }),
 
-    makeAllocation({ quarterId: activeQuarter.id, projectId: atlas.id, personId: quinn.id, role: 'Engineer', startDate: activeQuarter.startDate, endDate: '2026-04-10', percentage: 20 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: atlas.id, personId: ben.id, role: 'DRI', startDate: activeQuarter.startDate, percentage: 50 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: atlas.id, personId: cem.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 20 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: atlas.id, personId: leila.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 5 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: atlas.id, personId: priya.id, role: 'EM', startDate: activeQuarter.startDate }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: atlas.id, personId: mateo.id, role: 'PM', startDate: activeQuarter.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: atlas.id, personId: quinn.id, role: 'Engineer', startDate: activeCycle.startDate, endDate: '2026-04-10', percentage: 20 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: atlas.id, personId: ben.id, role: 'DRI', startDate: activeCycle.startDate, percentage: 50 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: atlas.id, personId: cem.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 20 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: atlas.id, personId: leila.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 5 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: atlas.id, personId: priya.id, role: 'EM', startDate: activeCycle.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: atlas.id, personId: mateo.id, role: 'PM', startDate: activeCycle.startDate }),
 
     // Active Data subteam: same roster across Lakehouse and Realtime
-    makeAllocation({ quarterId: activeQuarter.id, projectId: lakehouse.id, personId: farah.id, role: 'DRI', startDate: activeQuarter.startDate, percentage: 45 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: lakehouse.id, personId: imani.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 20 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: lakehouse.id, personId: jonah.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 10 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: lakehouse.id, personId: alice.id, role: 'EM', startDate: activeQuarter.startDate }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: lakehouse.id, personId: kai.id, role: 'PM', startDate: activeQuarter.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: lakehouse.id, personId: farah.id, role: 'DRI', startDate: activeCycle.startDate, percentage: 45 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: lakehouse.id, personId: imani.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 20 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: lakehouse.id, personId: jonah.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 10 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: lakehouse.id, personId: alice.id, role: 'EM', startDate: activeCycle.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: lakehouse.id, personId: kai.id, role: 'PM', startDate: activeCycle.startDate }),
 
-    makeAllocation({ quarterId: activeQuarter.id, projectId: realtime.id, personId: imani.id, role: 'DRI', startDate: activeQuarter.startDate, percentage: 25 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: realtime.id, personId: farah.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 20 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: realtime.id, personId: jonah.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 10 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: realtime.id, personId: alice.id, role: 'EM', startDate: activeQuarter.startDate }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: realtime.id, personId: mateo.id, role: 'PM', startDate: activeQuarter.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: realtime.id, personId: imani.id, role: 'DRI', startDate: activeCycle.startDate, percentage: 25 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: realtime.id, personId: farah.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 20 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: realtime.id, personId: jonah.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 10 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: realtime.id, personId: alice.id, role: 'EM', startDate: activeCycle.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: realtime.id, personId: mateo.id, role: 'PM', startDate: activeCycle.startDate }),
 
     // Active Frontend subteam: same roster across Mobile and Experimentation Hub
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mobile.id, personId: nia.id, role: 'DRI', startDate: activeQuarter.startDate, percentage: 40 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mobile.id, personId: omar.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 25 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mobile.id, personId: zoya.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 10 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mobile.id, personId: priya.id, role: 'EM', startDate: activeQuarter.startDate }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: mobile.id, personId: mateo.id, role: 'PM', startDate: activeQuarter.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mobile.id, personId: nia.id, role: 'DRI', startDate: activeCycle.startDate, percentage: 40 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mobile.id, personId: omar.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 25 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mobile.id, personId: zoya.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 10 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mobile.id, personId: priya.id, role: 'EM', startDate: activeCycle.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: mobile.id, personId: mateo.id, role: 'PM', startDate: activeCycle.startDate }),
 
-    makeAllocation({ quarterId: activeQuarter.id, projectId: experimentation.id, personId: omar.id, role: 'DRI', startDate: activeQuarter.startDate, percentage: 10 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: experimentation.id, personId: nia.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 0 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: experimentation.id, personId: zoya.id, role: 'Engineer', startDate: activeQuarter.startDate, percentage: 0 }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: experimentation.id, personId: priya.id, role: 'EM', startDate: activeQuarter.startDate }),
-    makeAllocation({ quarterId: activeQuarter.id, projectId: experimentation.id, personId: kai.id, role: 'PM', startDate: activeQuarter.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: experimentation.id, personId: omar.id, role: 'DRI', startDate: activeCycle.startDate, percentage: 10 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: experimentation.id, personId: nia.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 0 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: experimentation.id, personId: zoya.id, role: 'Engineer', startDate: activeCycle.startDate, percentage: 0 }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: experimentation.id, personId: priya.id, role: 'EM', startDate: activeCycle.startDate }),
+    makeAllocation({ cycleId: activeCycle.id, projectId: experimentation.id, personId: kai.id, role: 'PM', startDate: activeCycle.startDate }),
   ];
   await db.allocations.bulkAdd(allocations);
 }

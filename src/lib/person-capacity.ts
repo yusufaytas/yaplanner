@@ -4,11 +4,11 @@ import {
   type Allocation,
   type CapacityOverhead,
   type Person,
-  type Quarter,
-  type QuarterPerson,
+  type Cycle,
+  type CyclePerson,
   type Role,
 } from './types';
-import { getQuarterDurationWeeks } from './weeks';
+import { getCycleDurationWeeks } from './weeks';
 
 export interface PersonProjectCapacityShare {
   projectId: string;
@@ -23,12 +23,12 @@ export interface ProjectCapacitySummary {
   remainingPersonWeeks: number | null;
 }
 
-export interface QuarterCapacitySummary {
+export interface CycleCapacitySummary {
   totalAvailablePersonWeeks: number;
   totalAvailableWeeklyPeople: number;
 }
 
-export interface QuarterPersonCapacitySummary {
+export interface CyclePersonCapacitySummary {
   baseCapacity: number;
   effectiveCapacity: number;
   availableWeeks: number;
@@ -36,7 +36,7 @@ export interface QuarterPersonCapacitySummary {
   overhead: CapacityOverhead;
 }
 
-export interface QuarterPersonProjectSummary {
+export interface CyclePersonProjectSummary {
   tracksCapacity: boolean;
   availableWeeks: number;
   capacityLimit: number;
@@ -62,13 +62,13 @@ export function personTracksCapacity(role: Role | string): boolean {
 
 export function getPersonCapacityLimit(
   person: Pick<Person, 'defaultCapacity'>,
-  quarter?: Pick<Quarter, 'startDate' | 'endDate' | 'overhead'>,
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity'>,
+  quarter?: Pick<Cycle, 'startDate' | 'endDate' | 'overhead'>,
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity'>,
 ): number {
   if (quarter) {
-    return getQuarterPersonCapacitySummary(quarter as Quarter, person, quarterPerson as Pick<QuarterPerson, 'quarterCapacity' | 'overheadOverride'> | undefined).effectiveCapacity;
+    return getCyclePersonCapacitySummary(quarter as Cycle, person, cyclePerson as Pick<CyclePerson, 'cycleCapacity' | 'overheadOverride'> | undefined).effectiveCapacity;
   }
-  return Math.max(0, Math.min(100, Math.round(quarterPerson?.quarterCapacity ?? person.defaultCapacity)));
+  return Math.max(0, Math.min(100, Math.round(cyclePerson?.cycleCapacity ?? person.defaultCapacity)));
 }
 
 function getActiveCapacityAllocations(
@@ -76,7 +76,7 @@ function getActiveCapacityAllocations(
   filters: {
     personId?: string;
     projectId?: string;
-    quarterId?: string | null;
+    cycleId?: string | null;
   } = {},
 ): Allocation[] {
   return allocations.filter((allocation) => {
@@ -85,7 +85,7 @@ function getActiveCapacityAllocations(
     if (!allocation.projectId) return false;
     if (filters.personId !== undefined && allocation.personId !== filters.personId) return false;
     if (filters.projectId !== undefined && allocation.projectId !== filters.projectId) return false;
-    if (filters.quarterId !== undefined && allocation.quarterId !== filters.quarterId) return false;
+    if (filters.cycleId !== undefined && allocation.cycleId !== filters.cycleId) return false;
     return true;
   });
 }
@@ -110,18 +110,18 @@ function getExplicitProjectPercentages(allocations: Allocation[]): Map<string, n
 
 export function getPersonProjectCapacityShares(params: {
   person: Pick<Person, 'id' | 'role' | 'defaultCapacity'>;
-  quarter?: Pick<Quarter, 'startDate' | 'endDate' | 'overhead'>;
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity'>;
-  quarterId?: string | null;
+  quarter?: Pick<Cycle, 'startDate' | 'endDate' | 'overhead'>;
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity'>;
+  cycleId?: string | null;
   assignedProjectIds?: string[];
   allocations: Allocation[];
 }): PersonProjectCapacityShare[] {
-  const { person, quarter, quarterPerson, quarterId, assignedProjectIds = [], allocations } = params;
+  const { person, quarter, cyclePerson, cycleId, assignedProjectIds = [], allocations } = params;
   if (!personTracksCapacity(person.role)) return [];
 
-  const activeAllocations = getActiveCapacityAllocations(allocations, { personId: person.id, quarterId });
+  const activeAllocations = getActiveCapacityAllocations(allocations, { personId: person.id, cycleId });
   const explicitByProject = getExplicitProjectPercentages(activeAllocations);
-  const capacityLimit = getPersonCapacityLimit(person, quarter, quarterPerson);
+  const capacityLimit = getPersonCapacityLimit(person, quarter, cyclePerson);
   const projectIds = uniqueProjectIds([
     ...assignedProjectIds,
     ...activeAllocations.map((allocation) => allocation.projectId),
@@ -137,12 +137,12 @@ export function getPersonProjectCapacityShares(params: {
 export function getPersonProjectCapacityShare(params: {
   person: Pick<Person, 'id' | 'role' | 'defaultCapacity'>;
   projectId: string;
-  quarter?: Pick<Quarter, 'startDate' | 'endDate' | 'overhead'>;
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity'>;
-  quarterId?: string | null;
+  quarter?: Pick<Cycle, 'startDate' | 'endDate' | 'overhead'>;
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity'>;
+  cycleId?: string | null;
   allocations: Allocation[];
 }): PersonProjectCapacityShare {
-  const { person, projectId, quarter, quarterPerson, quarterId, allocations } = params;
+  const { person, projectId, quarter, cyclePerson, cycleId, allocations } = params;
   if (!personTracksCapacity(person.role)) {
     return { projectId, percentage: 0, isEvenSplit: false };
   }
@@ -150,8 +150,8 @@ export function getPersonProjectCapacityShare(params: {
   const shares = getPersonProjectCapacityShares({
     person,
     quarter,
-    quarterPerson,
-    quarterId,
+    cyclePerson,
+    cycleId,
     assignedProjectIds: [projectId],
     allocations,
   });
@@ -161,30 +161,30 @@ export function getPersonProjectCapacityShare(params: {
 
 export function getPersonExplicitAllocatedPct(params: {
   personId: string;
-  quarterId?: string | null;
+  cycleId?: string | null;
   projectIdToExclude?: string;
   allocations: Allocation[];
 }): number {
-  const { personId, quarterId, projectIdToExclude, allocations } = params;
-  return getActiveCapacityAllocations(allocations, { personId, quarterId })
+  const { personId, cycleId, projectIdToExclude, allocations } = params;
+  return getActiveCapacityAllocations(allocations, { personId, cycleId })
     .filter((allocation) => allocation.projectId !== projectIdToExclude)
     .reduce((sum, allocation) => sum + allocation.percentage, 0);
 }
 
 export function getPersonRemainingAllocationPct(params: {
   person: Pick<Person, 'id' | 'role' | 'defaultCapacity'>;
-  quarter?: Pick<Quarter, 'startDate' | 'endDate' | 'overhead'>;
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity'>;
-  quarterId?: string | null;
+  quarter?: Pick<Cycle, 'startDate' | 'endDate' | 'overhead'>;
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity'>;
+  cycleId?: string | null;
   allocations: Allocation[];
 }): number {
-  const { person, quarter, quarterPerson, quarterId, allocations } = params;
+  const { person, quarter, cyclePerson, cycleId, allocations } = params;
   if (!personTracksCapacity(person.role)) return 0;
 
-  const capacityLimit = getPersonCapacityLimit(person, quarter, quarterPerson);
+  const capacityLimit = getPersonCapacityLimit(person, quarter, cyclePerson);
   const explicitAllocatedPct = getPersonExplicitAllocatedPct({
     personId: person.id,
-    quarterId,
+    cycleId,
     allocations,
   });
   return Math.max(0, capacityLimit - explicitAllocatedPct);
@@ -193,18 +193,18 @@ export function getPersonRemainingAllocationPct(params: {
 export function getMaxProjectAllocationPercentage(params: {
   person: Pick<Person, 'id' | 'role' | 'defaultCapacity'>;
   projectId: string;
-  quarter?: Pick<Quarter, 'startDate' | 'endDate' | 'overhead'>;
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity'>;
-  quarterId?: string | null;
+  quarter?: Pick<Cycle, 'startDate' | 'endDate' | 'overhead'>;
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity'>;
+  cycleId?: string | null;
   allocations: Allocation[];
 }): number {
-  const { person, projectId, quarter, quarterPerson, quarterId, allocations } = params;
+  const { person, projectId, quarter, cyclePerson, cycleId, allocations } = params;
   if (!personTracksCapacity(person.role)) return 0;
 
-  const capacityLimit = getPersonCapacityLimit(person, quarter, quarterPerson);
+  const capacityLimit = getPersonCapacityLimit(person, quarter, cyclePerson);
   const otherAllocatedPct = getPersonExplicitAllocatedPct({
     personId: person.id,
-    quarterId,
+    cycleId,
     projectIdToExclude: projectId,
     allocations,
   });
@@ -214,9 +214,9 @@ export function getMaxProjectAllocationPercentage(params: {
 export function clampProjectAllocationPercentage(params: {
   person: Pick<Person, 'id' | 'role' | 'defaultCapacity'>;
   projectId: string;
-  quarter?: Pick<Quarter, 'startDate' | 'endDate' | 'overhead'>;
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity'>;
-  quarterId?: string | null;
+  quarter?: Pick<Cycle, 'startDate' | 'endDate' | 'overhead'>;
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity'>;
+  cycleId?: string | null;
   allocations: Allocation[];
   requestedPercentage: number;
 }): number {
@@ -225,53 +225,53 @@ export function clampProjectAllocationPercentage(params: {
   return Math.max(0, Math.min(maxAllowed, Math.round(requestedPercentage)));
 }
 
-export function getQuarterPersonAvailableWeeks(
-  quarter: Quarter,
+export function getCyclePersonAvailableWeeks(
+  quarter: Cycle,
   person: Pick<Person, 'defaultCapacity'>,
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity' | 'overheadOverride'>,
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity' | 'overheadOverride'>,
 ): number {
-  const quarterDurationWeeks = getQuarterDurationWeeks(quarter.startDate, quarter.endDate);
-  const baseCapacity = quarterPerson?.quarterCapacity ?? person.defaultCapacity;
-  const overhead = resolveOverhead(quarter.overhead, quarterPerson?.overheadOverride ?? null);
+  const quarterDurationWeeks = getCycleDurationWeeks(quarter.startDate, quarter.endDate);
+  const baseCapacity = cyclePerson?.cycleCapacity ?? person.defaultCapacity;
+  const overhead = resolveOverhead(quarter.overhead, cyclePerson?.overheadOverride ?? null);
   const effectiveCapacity = computeEffectiveCapacity(baseCapacity, overhead, quarterDurationWeeks);
   return Number(((quarterDurationWeeks * effectiveCapacity) / 100).toFixed(1));
 }
 
-export function getQuarterPersonCapacitySummary(
-  quarter: Quarter,
+export function getCyclePersonCapacitySummary(
+  quarter: Cycle,
   person: Pick<Person, 'defaultCapacity'>,
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity' | 'overheadOverride'>,
-): QuarterPersonCapacitySummary {
-  const quarterDurationWeeks = getQuarterDurationWeeks(quarter.startDate, quarter.endDate);
-  const baseCapacity = quarterPerson?.quarterCapacity ?? person.defaultCapacity;
-  const overhead = resolveOverhead(quarter.overhead, quarterPerson?.overheadOverride ?? null);
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity' | 'overheadOverride'>,
+): CyclePersonCapacitySummary {
+  const quarterDurationWeeks = getCycleDurationWeeks(quarter.startDate, quarter.endDate);
+  const baseCapacity = cyclePerson?.cycleCapacity ?? person.defaultCapacity;
+  const overhead = resolveOverhead(quarter.overhead, cyclePerson?.overheadOverride ?? null);
   const effectiveCapacity = computeEffectiveCapacity(baseCapacity, overhead, quarterDurationWeeks);
   return {
     baseCapacity,
     effectiveCapacity,
     availableWeeks: Number(((quarterDurationWeeks * effectiveCapacity) / 100).toFixed(1)),
-    usesOverride: quarterPerson?.overheadOverride !== null && quarterPerson?.overheadOverride !== undefined,
+    usesOverride: cyclePerson?.overheadOverride !== null && cyclePerson?.overheadOverride !== undefined,
     overhead,
   };
 }
 
 function getEffectiveCapacityLimit(
-  quarter: Quarter,
+  quarter: Cycle,
   person: Pick<Person, 'defaultCapacity'>,
-  quarterPerson?: Pick<QuarterPerson, 'quarterCapacity' | 'overheadOverride'>,
+  cyclePerson?: Pick<CyclePerson, 'cycleCapacity' | 'overheadOverride'>,
 ): number {
-  return getQuarterPersonCapacitySummary(quarter, person, quarterPerson).effectiveCapacity;
+  return getCyclePersonCapacitySummary(quarter, person, cyclePerson).effectiveCapacity;
 }
 
-export function getQuarterPersonProjectSummary(
-  quarter: Quarter,
+export function getCyclePersonProjectSummary(
+  quarter: Cycle,
   person: Pick<Person, 'id' | 'role' | 'defaultCapacity'>,
-  quarterPerson: Pick<QuarterPerson, 'quarterId' | 'quarterCapacity' | 'overheadOverride'> | undefined,
+  cyclePerson: Pick<CyclePerson, 'cycleId' | 'cycleCapacity' | 'overheadOverride'> | undefined,
   allocations: Allocation[],
-): QuarterPersonProjectSummary {
-  const availableWeeks = getQuarterPersonAvailableWeeks(quarter, person, quarterPerson);
+): CyclePersonProjectSummary {
+  const availableWeeks = getCyclePersonAvailableWeeks(quarter, person, cyclePerson);
   const tracksCapacity = personTracksCapacity(person.role);
-  const capacityLimit = getPersonCapacityLimit(person, quarter, quarterPerson);
+  const capacityLimit = getPersonCapacityLimit(person, quarter, cyclePerson);
 
   if (!tracksCapacity) {
     return {
@@ -290,8 +290,8 @@ export function getQuarterPersonProjectSummary(
   const shares = getPersonProjectCapacityShares({
     person,
     quarter,
-    quarterPerson,
-    quarterId: quarter.id,
+    cyclePerson,
+    cycleId: quarter.id,
     allocations,
   });
   const totalAllocatedPct = shares.reduce((sum, share) => sum + share.percentage, 0);
@@ -313,18 +313,18 @@ export function getQuarterPersonProjectSummary(
   };
 }
 
-export function getQuarterCapacitySummary(
-  quarter: Quarter,
+export function getCycleCapacitySummary(
+  quarter: Cycle,
   people: Person[],
-  quarterPeople: QuarterPerson[],
-): QuarterCapacitySummary {
+  cyclePeople: CyclePerson[],
+): CycleCapacitySummary {
   const totalAvailablePersonWeeks = Number(people.reduce((sum, person) => {
     if (!personTracksCapacity(person.role)) return sum;
-    const quarterPerson = quarterPeople.find((candidate) => candidate.personId === person.id && candidate.quarterId === quarter.id);
-    return sum + getQuarterPersonAvailableWeeks(quarter, person, quarterPerson);
+    const cyclePerson = cyclePeople.find((candidate) => candidate.personId === person.id && candidate.cycleId === quarter.id);
+    return sum + getCyclePersonAvailableWeeks(quarter, person, cyclePerson);
   }, 0).toFixed(1));
 
-  const quarterDurationWeeks = getQuarterDurationWeeks(quarter.startDate, quarter.endDate);
+  const quarterDurationWeeks = getCycleDurationWeeks(quarter.startDate, quarter.endDate);
   return {
     totalAvailablePersonWeeks,
     totalAvailableWeeklyPeople: quarterDurationWeeks > 0 ? Number((totalAvailablePersonWeeks / quarterDurationWeeks).toFixed(2)) : 0,
@@ -333,33 +333,33 @@ export function getQuarterCapacitySummary(
 
 export function getProjectCapacitySummary(params: {
   projectId: string;
-  quarter: Quarter;
+  quarter: Cycle;
   estimatedPersonWeeks: number | null;
   people: Person[];
-  quarterPeople: QuarterPerson[];
+  cyclePeople: CyclePerson[];
   activeAllocations: Allocation[];
 }): ProjectCapacitySummary {
-  const { projectId, quarter, estimatedPersonWeeks, people, quarterPeople, activeAllocations } = params;
-  const currentAllocations = getActiveCapacityAllocations(activeAllocations, { quarterId: quarter.id, projectId });
+  const { projectId, quarter, estimatedPersonWeeks, people, cyclePeople, activeAllocations } = params;
+  const currentAllocations = getActiveCapacityAllocations(activeAllocations, { cycleId: quarter.id, projectId });
   const assignedPeople = people.filter((person) => currentAllocations.some((allocation) => allocation.personId === person.id));
 
   const reservedPersonWeeks = Number(assignedPeople.reduce((sum, person) => {
-    const quarterPerson = quarterPeople.find((candidate) => candidate.personId === person.id && candidate.quarterId === quarter.id);
-    const availableWeeks = getQuarterPersonAvailableWeeks(quarter, person, quarterPerson);
-    const effectiveCapacity = getPersonCapacityLimit(person, quarter, quarterPerson);
+    const cyclePerson = cyclePeople.find((candidate) => candidate.personId === person.id && candidate.cycleId === quarter.id);
+    const availableWeeks = getCyclePersonAvailableWeeks(quarter, person, cyclePerson);
+    const effectiveCapacity = getPersonCapacityLimit(person, quarter, cyclePerson);
     const share = getPersonProjectCapacityShare({
       person,
       projectId,
       quarter,
-      quarterPerson,
-      quarterId: quarter.id,
+      cyclePerson,
+      cycleId: quarter.id,
       allocations: activeAllocations,
     });
     const projectUsageRatio = effectiveCapacity > 0 ? share.percentage / effectiveCapacity : 0;
     return sum + (availableWeeks * projectUsageRatio);
   }, 0).toFixed(1));
 
-  const quarterDurationWeeks = getQuarterDurationWeeks(quarter.startDate, quarter.endDate);
+  const quarterDurationWeeks = getCycleDurationWeeks(quarter.startDate, quarter.endDate);
   const reservedWeeklyPeople = quarterDurationWeeks > 0 ? Number((reservedPersonWeeks / quarterDurationWeeks).toFixed(2)) : 0;
 
   return {
@@ -372,21 +372,21 @@ export function getProjectCapacitySummary(params: {
 
 export function getAssignableEngineers(
   people: Person[],
-  quarterPeople: QuarterPerson[],
-  quarter: Quarter,
+  cyclePeople: CyclePerson[],
+  quarter: Cycle,
   activeAllocations: Allocation[],
 ): Person[] {
   return people.filter((person) => {
     if (!personTracksCapacity(person.role)) return false;
-    const quarterPerson = quarterPeople.find((entry) => entry.personId === person.id && entry.quarterId === quarter.id);
-    if (!quarterPerson || quarterPerson.inactive) return false;
-    const availableWeeks = getQuarterPersonAvailableWeeks(quarter, person, quarterPerson);
+    const cyclePerson = cyclePeople.find((entry) => entry.personId === person.id && entry.cycleId === quarter.id);
+    if (!cyclePerson || cyclePerson.inactive) return false;
+    const availableWeeks = getCyclePersonAvailableWeeks(quarter, person, cyclePerson);
     if (availableWeeks <= 0) return false;
     return getPersonRemainingAllocationPct({
       person,
       quarter,
-      quarterPerson,
-      quarterId: quarter.id,
+      cyclePerson,
+      cycleId: quarter.id,
       allocations: activeAllocations,
     }) > 0;
   });

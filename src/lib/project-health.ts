@@ -1,5 +1,5 @@
-import { getQuarterPersonProjectSummary } from './person-capacity';
-import type { Allocation, Person, Project, ProjectStatus, Quarter, QuarterPerson, Unknown, Risk } from './types';
+import { getCyclePersonProjectSummary } from './person-capacity';
+import type { Allocation, Person, Project, ProjectStatus, Cycle, CyclePerson, Unknown, Risk } from './types';
 
 export type ProjectHealth = 'blue' | 'green' | 'yellow' | 'red';
 
@@ -35,25 +35,25 @@ export function computeProjectHealth(
 }
 
 export function getOverAllocatedProjectIds(params: {
-  quarter: Quarter;
+  quarter: Cycle;
   people: Person[];
-  quarterPeople: QuarterPerson[];
+  cyclePeople: CyclePerson[];
   allocations: Allocation[];
 }): Set<string> {
-  const { quarter, people, quarterPeople, allocations } = params;
+  const { quarter, people, cyclePeople, allocations } = params;
   const overAllocatedProjectIds = new Set<string>();
 
   for (const person of people) {
-    const quarterPerson = quarterPeople.find(
-      (entry) => entry.personId === person.id && entry.quarterId === quarter.id,
+    const cyclePerson = cyclePeople.find(
+      (entry) => entry.personId === person.id && entry.cycleId === quarter.id,
     );
-    const summary = getQuarterPersonProjectSummary(quarter, person, quarterPerson, allocations);
+    const summary = getCyclePersonProjectSummary(quarter, person, cyclePerson, allocations);
     if (!summary.tracksCapacity || !summary.overAllocated) continue;
 
     for (const allocation of allocations) {
       if (
         allocation.personId === person.id &&
-        allocation.quarterId === quarter.id &&
+        allocation.cycleId === quarter.id &&
         allocation.projectId &&
         allocation.endDate === null &&
         (allocation.role === 'Engineer' || allocation.role === 'DRI')

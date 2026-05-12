@@ -4,10 +4,10 @@ import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
 import { InlineEditText, InlineEditSelect, InlineEditNumber } from '@/components/ui/InlineEdit';
-import { getQuarterPersonProjectSummary, personTracksCapacity } from '@/lib/person-capacity';
+import { getCyclePersonProjectSummary, personTracksCapacity } from '@/lib/person-capacity';
 import { getProjectMemberAllocationMax, updateProjectMemberAllocationPercentage } from '@/lib/projects';
 import { getPersonPageData, updatePerson } from '@/lib/people';
-import { getActiveQuarter } from '@/lib/quarters';
+import { getActiveCycle } from '@/lib/cycles';
 import type { Role } from '@/lib/types';
 
 const ROLE_OPTIONS = [
@@ -25,14 +25,14 @@ export default function PersonPageClient() {
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
   if (!data.person) return <div className="text-sm text-zinc-400">Person not found.</div>;
 
-  const { person, subteams, allocations, projects, quarters, quarterPeople } = data;
+  const { person, subteams, allocations, projects, quarters, cyclePeople } = data;
   const projectById = new Map(projects.map((p) => [p.id, p]));
-  const activeQuarter = getActiveQuarter(quarters);
-  const activeQuarterPerson = activeQuarter
-    ? quarterPeople.find((entry) => entry.personId === person.id && entry.quarterId === activeQuarter.id)
+  const activeCycle = getActiveCycle(quarters);
+  const activeCyclePerson = activeCycle
+    ? cyclePeople.find((entry) => entry.personId === person.id && entry.cycleId === activeCycle.id)
     : undefined;
-  const activeQuarterSummary = activeQuarter && activeQuarterPerson && personTracksCapacity(person.role)
-    ? getQuarterPersonProjectSummary(activeQuarter, person, activeQuarterPerson, allocations)
+  const activeCycleSummary = activeCycle && activeCyclePerson && personTracksCapacity(person.role)
+    ? getCyclePersonProjectSummary(activeCycle, person, activeCyclePerson, allocations)
     : null;
 
   const save = (patch: Parameters<typeof updatePerson>[1]) =>
@@ -117,17 +117,17 @@ export default function PersonPageClient() {
           </div>
         </div>
 
-        {activeQuarterSummary && (
+        {activeCycleSummary && (
           <div className={`rounded-xl border px-3 py-2 text-sm ${
-            activeQuarterSummary.overAllocated
+            activeCycleSummary.overAllocated
               ? 'border-rose-500/20 bg-rose-500/10 text-rose-300'
               : 'border-white/10 bg-white/[0.02] text-zinc-300'
           }`}>
-            <span className="text-xs uppercase tracking-[0.2em] text-zinc-500">{activeQuarter?.name}</span>
+            <span className="text-xs uppercase tracking-[0.2em] text-zinc-500">{activeCycle?.name}</span>
             <p className="mt-1">
-              {activeQuarterSummary.overAllocated
-                ? `Over capacity: ${activeQuarterSummary.allocatedWeeks}w allocated against ${activeQuarterSummary.availableWeeks}w available`
-                : `${Math.max(0, activeQuarterSummary.remainingWeeks)}w free · ${activeQuarterSummary.allocatedWeeks}w allocated of ${activeQuarterSummary.availableWeeks}w available`}
+              {activeCycleSummary.overAllocated
+                ? `Over capacity: ${activeCycleSummary.allocatedWeeks}w allocated against ${activeCycleSummary.availableWeeks}w available`
+                : `${Math.max(0, activeCycleSummary.remainingWeeks)}w free · ${activeCycleSummary.allocatedWeeks}w allocated of ${activeCycleSummary.availableWeeks}w available`}
             </p>
           </div>
         )}
@@ -147,13 +147,13 @@ export default function PersonPageClient() {
               const activeRoles = [...new Set(activeAllocs.map((a) => a.role))];
               const editableAllocation = activeAllocs.find((a) => a.role === 'Engineer' || a.role === 'DRI') ?? null;
               const totalPct = activeAllocs.reduce((sum, a) => sum + a.percentage, 0);
-              const maxAllocation = activeQuarter
+              const maxAllocation = activeCycle
                 ? getProjectMemberAllocationMax({
                   allocations,
                   person,
                   projectId: pid,
-                  quarterId: activeQuarter.id,
-                  quarterPeople,
+                  cycleId: activeCycle.id,
+                  cyclePeople,
                 })
                 : 100;
               return (

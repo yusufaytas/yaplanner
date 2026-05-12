@@ -5,7 +5,7 @@
  * A week overlaps the range if its Monday falls on or before endDate AND
  * its Sunday falls on or after startDate.
  */
-export function getQuarterWeeks(startDate: string, endDate: string): string[] {
+export function getCycleWeeks(startDate: string, endDate: string): string[] {
   const start = new Date(startDate);
   const end = new Date(endDate);
 
@@ -30,7 +30,7 @@ export function getQuarterWeeks(startDate: string, endDate: string): string[] {
  * Returns the precise duration of the quarter in weeks based on the inclusive
  * day range, rather than the number of overlapping Monday buckets.
  */
-export function getQuarterDurationWeeks(startDate: string, endDate: string): number {
+export function getCycleDurationWeeks(startDate: string, endDate: string): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
   const inclusiveDays = ((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;

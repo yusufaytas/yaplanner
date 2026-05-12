@@ -2,6 +2,7 @@
 
 import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useState } from 'react';
 import Link from 'next/link';
 import { PersonCard } from '@/components/people/PersonCard';
 import { ProjectCard } from '@/components/projects/ProjectCard';
@@ -9,28 +10,45 @@ import { InlineEditText } from '@/components/ui/InlineEdit';
 import { buildProjectLeadershipMaps } from '@/lib/project-directory';
 import { buildProjectHealthMap, getOverAllocatedProjectIds } from '@/lib/project-health';
 import { getSubteamActiveAllocations, getSubteamPageData, getSubteamPeople, getSubteamProjectCollections, updateSubteam } from '@/lib/subteams';
-import { getActiveQuarter } from '@/lib/quarters';
+import { getActiveCycle } from '@/lib/cycles';
+import { updateProjectSubteam } from '@/lib/projects';
 
 export default function SubteamPageClient() {
   const { subteamId } = useParams<{ subteamId: string }>();
+  const [addingProject, setAddingProject] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
 
   const data = useLiveQuery(() => getSubteamPageData(subteamId), [subteamId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
   if (!data.subteam) return <div className="text-sm text-zinc-400">Subteam not found.</div>;
 
-  const { subteam, people, quarters, projects, allocations, quarterPeople } = data;
-  const activeQuarter = getActiveQuarter(quarters);
-  const activeAllocations = allocations.filter((allocation) => allocation.endDate === null && (activeQuarter ? allocation.quarterId === activeQuarter.id : true));
+  const { subteam, people, quarters, projects, allocations, cyclePeople } = data;
+  const activeCycle = getActiveCycle(quarters);
+  const activeAllocations = allocations.filter(
+    (allocation) => allocation.endDate === null && (activeCycle ? allocation.cycleId === activeCycle.id : true),
+  );
   const memberAllocations = getSubteamActiveAllocations(projects, activeAllocations, subteamId);
   const members = getSubteamPeople(people, memberAllocations);
   const { ownedProjects, contributingProjects } = getSubteamProjectCollections(projects, memberAllocations, subteamId);
   const personById = new Map(people.map((person) => [person.id, person]));
-  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, activeAllocations, activeQuarter?.id ?? null);
-  const overAllocatedProjectIds = activeQuarter
-    ? getOverAllocatedProjectIds({ quarter: activeQuarter, people, quarterPeople, allocations })
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, activeAllocations, activeCycle?.id ?? null);
+  const overAllocatedProjectIds = activeCycle
+    ? getOverAllocatedProjectIds({ quarter: activeCycle, people, cyclePeople, allocations })
     : undefined;
   const healthByProject = buildProjectHealthMap(projects, undefined, undefined, overAllocatedProjectIds);
+
+  // Projects not yet assigned to any subteam, sorted by name
+  const assignableProjects = projects
+    .filter((p) => p.subteamId === null && p.status !== 'Complete' && p.status !== 'Cancelled')
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  async function handleAssignProject() {
+    if (!selectedProjectId) return;
+    await updateProjectSubteam(selectedProjectId, subteamId);
+    setSelectedProjectId('');
+    setAddingProject(false);
+  }
 
   return (
     <div className="space-y-6">
@@ -69,7 +87,42 @@ export default function SubteamPageClient() {
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-3">
-        <h2 className="text-sm font-semibold text-zinc-200">Owned projects</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-200">Owned projects</h2>
+          <button
+            onClick={() => { setAddingProject((v) => !v); setSelectedProjectId(''); }}
+            className="text-xs text-sky-400 hover:text-sky-200 transition-colors"
+          >
+            {addingProject ? 'Cancel' : '+ Assign project'}
+          </button>
+        </div>
+
+        {addingProject && (
+          <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+            <select
+              autoFocus
+              value={selectedProjectId}
+              onChange={(e) => setSelectedProjectId(e.target.value)}
+              className="flex-1 rounded border border-white/10 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
+            >
+              <option value="">Select a project…</option>
+              {assignableProjects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={handleAssignProject}
+              disabled={!selectedProjectId}
+              className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Assign
+            </button>
+            {assignableProjects.length === 0 && (
+              <span className="text-xs text-zinc-500">No unassigned projects available.</span>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {ownedProjects.map((project) => (
             <Link key={project.id} href={`/projects/${project.id}`}>

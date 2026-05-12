@@ -9,7 +9,7 @@ import { buildProjectLeadershipMaps, splitProjectsByStatus } from '@/lib/project
 import { buildProjectHealthMap, getOverAllocatedProjectIds } from '@/lib/project-health';
 import { filterProjectsByTags, filterTagOptions, listProjectTags, normalizeProjectTag } from '@/lib/project-tags';
 import { createProject as createProjectRecord, deleteProjectCascade, getProjectsPageData } from '@/lib/projects';
-import { getActiveQuarter } from '@/lib/quarters';
+import { getActiveCycle } from '@/lib/cycles';
 import type { ProjectStatus } from '@/lib/types';
 
 function uid() { return crypto.randomUUID(); }
@@ -30,14 +30,14 @@ export default function ProjectsPage() {
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
 
-  const { projects, people, allocations, quarters, quarterPeople } = data;
+  const { projects, people, allocations, quarters, cyclePeople } = data;
   const personById = new Map(people.map((p) => [p.id, p]));
-  const activeQuarter = getActiveQuarter(quarters);
-  const activeQuarterId = activeQuarter?.id;
-  const overAllocatedProjectIds = activeQuarter
-    ? getOverAllocatedProjectIds({ quarter: activeQuarter, people, quarterPeople, allocations })
+  const activeCycle = getActiveCycle(quarters);
+  const activeCycleId = activeCycle?.id;
+  const overAllocatedProjectIds = activeCycle
+    ? getOverAllocatedProjectIds({ quarter: activeCycle, people, cyclePeople, allocations })
     : undefined;
-  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, allocations, activeQuarterId ?? null);
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, allocations, activeCycleId ?? null);
   const healthByProject = buildProjectHealthMap(projects, undefined, undefined, overAllocatedProjectIds);
   const { activeProjects, archivedProjects } = splitProjectsByStatus(projects);
   const allTags = listProjectTags(projects);

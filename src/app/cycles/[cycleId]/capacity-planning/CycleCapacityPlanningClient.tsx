@@ -5,8 +5,8 @@ import { useParams } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { getQuarterPersonCapacitySummary, personTracksCapacity } from '@/lib/person-capacity';
-import { getCapacityPlanningData, updateQuarter, updateQuarterPerson } from '@/lib/quarters';
+import { getCyclePersonCapacitySummary, personTracksCapacity } from '@/lib/person-capacity';
+import { getCapacityPlanningData, updateCycle, updateCyclePerson } from '@/lib/cycles';
 import type { CapacityOverhead, OverheadItem } from '@/lib/types';
 
 function updateOverheadItem(items: OverheadItem[], itemId: string, value: number): OverheadItem[] {
@@ -33,78 +33,78 @@ function overheadItemLabel(item: OverheadItem): string {
   return `${item.label} in ${item.type === 'pct' ? 'percentage' : 'weeks'}`;
 }
 
-export default function QuarterCapacityPlanningClient() {
-  const { quarterId } = useParams<{ quarterId: string }>();
-  const [newQuarterItemLabel, setNewQuarterItemLabel] = useState('');
-  const [newQuarterItemType, setNewQuarterItemType] = useState<'pct' | 'weeks'>('pct');
-  const [newQuarterItemValue, setNewQuarterItemValue] = useState('0');
+export default function CycleCapacityPlanningClient() {
+  const { cycleId } = useParams<{ cycleId: string }>();
+  const [newCycleItemLabel, setNewCycleItemLabel] = useState('');
+  const [newCycleItemType, setNewCycleItemType] = useState<'pct' | 'weeks'>('pct');
+  const [newCycleItemValue, setNewCycleItemValue] = useState('0');
   const [editingOverrideFor, setEditingOverrideFor] = useState<string | null>(null);
   const [overrideDrafts, setOverrideDrafts] = useState<Record<string, CapacityOverhead>>({});
 
-  const data = useLiveQuery(() => getCapacityPlanningData(quarterId), [quarterId]);
+  const data = useLiveQuery(() => getCapacityPlanningData(cycleId), [cycleId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
-  if (!data.quarter) return <div className="text-sm text-zinc-400">Quarter not found.</div>;
+  if (!data.quarter) return <div className="text-sm text-zinc-400">Cycle not found.</div>;
 
-  const { quarter, people, quarterPeople } = data;
+  const { quarter, people, cyclePeople } = data;
   const engineerPeople = people.filter((person) => personTracksCapacity(person.role));
-  const quarterPersonByPersonId = new Map(quarterPeople.map((quarterPerson) => [quarterPerson.personId, quarterPerson]));
+  const cyclePersonByPersonId = new Map(cyclePeople.map((cyclePerson) => [cyclePerson.personId, cyclePerson]));
 
-  async function saveQuarterOverhead(itemId: string, value: number) {
-    await updateQuarter(quarter.id, {
+  async function saveCycleOverhead(itemId: string, value: number) {
+    await updateCycle(quarter.id, {
       overhead: { items: updateOverheadItem(quarter.overhead.items, itemId, value) },
     });
   }
 
-  async function saveQuarterPersonCapacity(quarterPersonId: string, value: number) {
-    await updateQuarterPerson(quarterPersonId, { quarterCapacity: Math.max(0, Math.min(100, Math.round(value))) });
+  async function saveCyclePersonCapacity(cyclePersonId: string, value: number) {
+    await updateCyclePerson(cyclePersonId, { cycleCapacity: Math.max(0, Math.min(100, Math.round(value))) });
   }
 
-  async function enableOverride(quarterPersonId: string) {
+  async function enableOverride(cyclePersonId: string) {
     const draft = cloneOverhead(quarter.overhead);
-    setOverrideDrafts((current) => ({ ...current, [quarterPersonId]: draft }));
-    setEditingOverrideFor(quarterPersonId);
-    await updateQuarterPerson(quarterPersonId, { overheadOverride: draft });
+    setOverrideDrafts((current) => ({ ...current, [cyclePersonId]: draft }));
+    setEditingOverrideFor(cyclePersonId);
+    await updateCyclePerson(cyclePersonId, { overheadOverride: draft });
   }
 
-  async function saveOverrideDraft(quarterPersonId: string) {
-    const draft = overrideDrafts[quarterPersonId];
+  async function saveOverrideDraft(cyclePersonId: string) {
+    const draft = overrideDrafts[cyclePersonId];
     if (!draft) return;
-    await updateQuarterPerson(quarterPersonId, { overheadOverride: draft });
+    await updateCyclePerson(cyclePersonId, { overheadOverride: draft });
     setEditingOverrideFor(null);
   }
 
-  async function resetOverrideToDefault(quarterPersonId: string) {
+  async function resetOverrideToDefault(cyclePersonId: string) {
     setOverrideDrafts((current) => {
       const next = { ...current };
-      delete next[quarterPersonId];
+      delete next[cyclePersonId];
       return next;
     });
     setEditingOverrideFor(null);
-    await updateQuarterPerson(quarterPersonId, { overheadOverride: null });
+    await updateCyclePerson(cyclePersonId, { overheadOverride: null });
   }
 
-  async function addQuarterOverheadItem() {
-    const label = newQuarterItemLabel.trim();
+  async function addCycleOverheadItem() {
+    const label = newCycleItemLabel.trim();
     if (!label) return;
-    const value = Number(newQuarterItemValue);
-    await updateQuarter(quarter.id, {
+    const value = Number(newCycleItemValue);
+    await updateCycle(quarter.id, {
       overhead: {
         items: addOverheadItem(quarter.overhead.items, {
           id: uid(),
           label,
-          type: newQuarterItemType,
+          type: newCycleItemType,
           value: Number.isFinite(value) ? value : 0,
         }),
       },
     });
-    setNewQuarterItemLabel('');
-    setNewQuarterItemType('pct');
-    setNewQuarterItemValue('0');
+    setNewCycleItemLabel('');
+    setNewCycleItemType('pct');
+    setNewCycleItemValue('0');
   }
 
-  async function removeQuarterOverheadItem(itemId: string) {
-    await updateQuarter(quarter.id, {
+  async function removeCycleOverheadItem(itemId: string) {
+    await updateCycle(quarter.id, {
       overhead: { items: removeOverheadItem(quarter.overhead.items, itemId) },
     });
   }
@@ -116,7 +116,7 @@ export default function QuarterCapacityPlanningClient() {
           <div>
             <h2 className="text-lg font-semibold text-zinc-100">Capacity Planning</h2>
             <p className="mt-1 text-sm text-zinc-400">
-              Quarter-level overhead applies to everyone by default. Override a person only when their quarter differs from the default.
+              Cycle-level overhead applies to everyone by default. Override a person only when their cycle differs from the default.
             </p>
           </div>
           <Badge variant="info">{quarter.name}</Badge>
@@ -132,11 +132,11 @@ export default function QuarterCapacityPlanningClient() {
                 min={0}
                 max={item.type === 'pct' ? 100 : 13}
                 step={item.type === 'pct' ? 1 : 0.5}
-                onBlur={(event) => saveQuarterOverhead(item.id, Number(event.target.value))}
+                onBlur={(event) => saveCycleOverhead(item.id, Number(event.target.value))}
                 className="w-full rounded border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
               />
               <button
-                onClick={() => removeQuarterOverheadItem(item.id)}
+                onClick={() => removeCycleOverheadItem(item.id)}
                 className="absolute top-2 right-2 text-xs text-zinc-600 hover:text-rose-400"
                 title="Remove overhead item"
               >
@@ -150,8 +150,8 @@ export default function QuarterCapacityPlanningClient() {
           <label className="text-xs text-zinc-500">
             <span className="mb-1 block">Label</span>
             <input
-              value={newQuarterItemLabel}
-              onChange={(event) => setNewQuarterItemLabel(event.target.value)}
+              value={newCycleItemLabel}
+              onChange={(event) => setNewCycleItemLabel(event.target.value)}
               placeholder="e.g. Support"
               className="w-40 rounded border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
             />
@@ -159,8 +159,8 @@ export default function QuarterCapacityPlanningClient() {
           <label className="text-xs text-zinc-500">
             <span className="mb-1 block">Type</span>
             <select
-              value={newQuarterItemType}
-              onChange={(event) => setNewQuarterItemType(event.target.value as 'pct' | 'weeks')}
+              value={newCycleItemType}
+              onChange={(event) => setNewCycleItemType(event.target.value as 'pct' | 'weeks')}
               className="rounded border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
             >
               <option value="pct">Percent</option>
@@ -171,16 +171,16 @@ export default function QuarterCapacityPlanningClient() {
             <span className="mb-1 block">Value</span>
             <input
               type="number"
-              value={newQuarterItemValue}
+              value={newCycleItemValue}
               min={0}
-              max={newQuarterItemType === 'pct' ? 100 : 13}
-              step={newQuarterItemType === 'pct' ? 1 : 0.5}
-              onChange={(event) => setNewQuarterItemValue(event.target.value)}
+              max={newCycleItemType === 'pct' ? 100 : 13}
+              step={newCycleItemType === 'pct' ? 1 : 0.5}
+              onChange={(event) => setNewCycleItemValue(event.target.value)}
               className="w-24 rounded border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
             />
           </label>
           <button
-            onClick={addQuarterOverheadItem}
+            onClick={addCycleOverheadItem}
             className="rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
           >
             Add item
@@ -190,8 +190,8 @@ export default function QuarterCapacityPlanningClient() {
 
       {engineerPeople.length === 0 ? (
         <EmptyState
-          title="No engineers in this quarter"
-          description="Add engineers to the quarter before planning capacity."
+          title="No engineers in this cycle"
+          description="Add engineers to the cycle before planning capacity."
         />
       ) : (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
@@ -214,12 +214,12 @@ export default function QuarterCapacityPlanningClient() {
               </thead>
               <tbody>
                 {engineerPeople.map((person) => {
-                  const quarterPerson = quarterPersonByPersonId.get(person.id);
-                  if (!quarterPerson) return null;
-                  const summary = getQuarterPersonCapacitySummary(quarter, person, quarterPerson);
+                  const cyclePerson = cyclePersonByPersonId.get(person.id);
+                  if (!cyclePerson) return null;
+                  const summary = getCyclePersonCapacitySummary(quarter, person, cyclePerson);
                   const overhead = summary.usesOverride ? summary.overhead : quarter.overhead;
-                  const isEditingOverride = editingOverrideFor === quarterPerson.id;
-                  const draftOverhead = overrideDrafts[quarterPerson.id] ?? overhead;
+                  const isEditingOverride = editingOverrideFor === cyclePerson.id;
+                  const draftOverhead = overrideDrafts[cyclePerson.id] ?? overhead;
                   return (
                     <Fragment key={person.id}>
                       <tr key={person.id} className="border-b border-white/5 align-top">
@@ -230,10 +230,10 @@ export default function QuarterCapacityPlanningClient() {
                         <td className="py-3 pr-4">
                           <input
                             type="number"
-                            defaultValue={quarterPerson.quarterCapacity}
+                            defaultValue={cyclePerson.cycleCapacity}
                             min={0}
                             max={100}
-                            onBlur={(event) => saveQuarterPersonCapacity(quarterPerson.id, Number(event.target.value))}
+                            onBlur={(event) => saveCyclePersonCapacity(cyclePerson.id, Number(event.target.value))}
                             className="w-20 rounded border border-white/10 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
                           />
                         </td>
@@ -242,7 +242,7 @@ export default function QuarterCapacityPlanningClient() {
                         <td className="py-3 pr-0">
                           {!isEditingOverride && (
                             <button
-                              onClick={() => summary.usesOverride ? setEditingOverrideFor(quarterPerson.id) : enableOverride(quarterPerson.id)}
+                              onClick={() => summary.usesOverride ? setEditingOverrideFor(cyclePerson.id) : enableOverride(cyclePerson.id)}
                               className="inline-flex items-center rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-white/[0.08] hover:text-zinc-100"
                             >
                               Override
@@ -258,13 +258,13 @@ export default function QuarterCapacityPlanningClient() {
                                 <span className="text-xs uppercase tracking-[0.2em] text-zinc-500">Override</span>
                                 <div className="flex items-center gap-2">
                                   <button
-                                    onClick={() => resetOverrideToDefault(quarterPerson.id)}
+                                    onClick={() => resetOverrideToDefault(cyclePerson.id)}
                                     className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-white/[0.08]"
                                   >
                                     Set to default
                                   </button>
                                   <button
-                                    onClick={() => saveOverrideDraft(quarterPerson.id)}
+                                    onClick={() => saveOverrideDraft(cyclePerson.id)}
                                     className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-white/[0.08]"
                                   >
                                     Save
@@ -288,7 +288,7 @@ export default function QuarterCapacityPlanningClient() {
                                         const value = Number(event.target.value);
                                         setOverrideDrafts((current) => ({
                                           ...current,
-                                          [quarterPerson.id]: {
+                                          [cyclePerson.id]: {
                                             items: updateOverheadItem(draftOverhead.items, item.id, Number.isFinite(value) ? value : 0),
                                           },
                                         }));

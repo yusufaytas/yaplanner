@@ -21,7 +21,7 @@ function makeAllocation(
   overrides: Partial<Allocation> & Pick<Allocation, 'id' | 'personId' | 'projectId' | 'role'>,
 ): Allocation {
   return {
-    quarterId: 'q1',
+    cycleId: 'q1',
     startDate: '2026-04-01',
     endDate: null,
     percentage: 0,
@@ -96,10 +96,10 @@ describe('buildProjectLeadershipMaps', () => {
     expect(driByProject.has('p1')).toBe(false);
   });
 
-  it('filters by activeQuarterId when provided', () => {
+  it('filters by activeCycleId when provided', () => {
     const allocations = [
-      makeAllocation({ id: 'a1', personId: 'person-dri', projectId: 'p1', role: 'DRI', quarterId: 'q1' }),
-      makeAllocation({ id: 'a2', personId: 'person-dri-2', projectId: 'p1', role: 'DRI', quarterId: 'q2' }),
+      makeAllocation({ id: 'a1', personId: 'person-dri', projectId: 'p1', role: 'DRI', cycleId: 'q1' }),
+      makeAllocation({ id: 'a2', personId: 'person-dri-2', projectId: 'p1', role: 'DRI', cycleId: 'q2' }),
     ];
     const { driByProject } = buildProjectLeadershipMaps(projects, allocations, 'q1');
     expect(driByProject.get('p1')).toBe('person-dri');

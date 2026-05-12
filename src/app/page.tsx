@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { splitLeadershipPeople } from '@/lib/people';
 import { buildProjectLeadershipMaps } from '@/lib/project-directory';
 import { buildProjectHealthMap, getOverAllocatedProjectIds } from '@/lib/project-health';
-import { getActiveQuarter } from '@/lib/quarters';
+import { getActiveCycle } from '@/lib/cycles';
 import { getHomePageData } from '@/lib/projects';
 
 export default function HomePage() {
@@ -23,14 +23,14 @@ export default function HomePage() {
     );
   }
 
-  const { people, subteams, projects, quarters, allocations, quarterPeople } = data;
-  const activeQuarter = getActiveQuarter(quarters);
-  const overAllocatedProjectIds = activeQuarter
-    ? getOverAllocatedProjectIds({ quarter: activeQuarter, people, quarterPeople, allocations })
+  const { people, subteams, projects, quarters, allocations, cyclePeople } = data;
+  const activeCycle = getActiveCycle(quarters);
+  const overAllocatedProjectIds = activeCycle
+    ? getOverAllocatedProjectIds({ quarter: activeCycle, people, cyclePeople, allocations })
     : undefined;
 
   const personById = new Map(people.map((p) => [p.id, p]));
-  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, allocations, activeQuarter?.id ?? null);
+  const { driByProject, emByProject, pmByProject } = buildProjectLeadershipMaps(projects, allocations, activeCycle?.id ?? null);
   const healthByProject = buildProjectHealthMap(projects, undefined, undefined, overAllocatedProjectIds);
   const { ems, pms } = splitLeadershipPeople(people);
   const isEmpty = people.length === 0 && projects.length === 0;
@@ -41,24 +41,24 @@ export default function HomePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-zinc-50">Overview</h1>
-          {activeQuarter && (
+          {activeCycle && (
             <p className="mt-0.5 text-sm text-zinc-400">
-              Active quarter:{' '}
+              Active cycle:{' '}
               <Link
-                href={`/quarters/${activeQuarter.id}`}
+                href={`/cycles/${activeCycle.id}`}
                 className="font-medium text-sky-200 hover:text-sky-100 hover:underline"
               >
-                {activeQuarter.name}
+                {activeCycle.name}
               </Link>
             </p>
           )}
         </div>
-        {activeQuarter && (
+        {activeCycle && (
           <Link
-            href={`/quarters/${activeQuarter.id}`}
+            href={`/cycles/${activeCycle.id}`}
             className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:border-sky-400/30 hover:bg-white/8 hover:text-zinc-50"
           >
-            Open quarter plan →
+            Open cycle plan →
           </Link>
         )}
       </div>

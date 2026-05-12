@@ -37,7 +37,7 @@ describe('computeEffectiveCapacity', () => {
     expect(computeEffectiveCapacity(100, overhead, 13)).toBe(0);
   });
 
-  it('handles a weeks item when totalQuarterWeeks is 0 (no reduction)', () => {
+  it('handles a weeks item when totalCycleWeeks is 0 (no reduction)', () => {
     // fraction = 0/0 = 0, so no reduction
     expect(computeEffectiveCapacity(80, { items: [{ id: 'pto', label: 'PTO', type: 'weeks', value: 1 }] }, 0)).toBe(80);
   });
@@ -53,7 +53,7 @@ describe('computeEffectiveCapacity', () => {
 });
 
 describe('resolveOverhead', () => {
-  const quarterOverhead: CapacityOverhead = {
+  const cycleOverhead: CapacityOverhead = {
     items: [{ id: 'meetings', label: 'Meetings', type: 'pct', value: 10 }],
   };
   const personOverride: CapacityOverhead = {
@@ -61,15 +61,15 @@ describe('resolveOverhead', () => {
   };
 
   it('returns the quarter overhead when no person override is set', () => {
-    expect(resolveOverhead(quarterOverhead, null)).toBe(quarterOverhead);
+    expect(resolveOverhead(cycleOverhead, null)).toBe(cycleOverhead);
   });
 
   it('returns the person override when one is set', () => {
-    expect(resolveOverhead(quarterOverhead, personOverride)).toBe(personOverride);
+    expect(resolveOverhead(cycleOverhead, personOverride)).toBe(personOverride);
   });
 
   it('person override completely replaces quarter overhead (not merged)', () => {
-    const resolved = resolveOverhead(quarterOverhead, personOverride);
+    const resolved = resolveOverhead(cycleOverhead, personOverride);
     expect(resolved.items).toHaveLength(1);
     expect(resolved.items[0].id).toBe('custom');
   });

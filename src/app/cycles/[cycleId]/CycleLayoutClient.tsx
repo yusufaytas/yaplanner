@@ -5,52 +5,52 @@ import { useParams, usePathname } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/Badge';
-import type { QuarterStatus } from '@/lib/types';
+import type { CycleStatus } from '@/lib/types';
 import {
-  getQuarterLayoutData,
-  getQuarterEditStatus,
-  getStoredQuarterStatusForEditStatus,
-  updateQuarter,
-  updateQuarterDraftEndDate,
-  updateQuarterDraftStartDate,
-  type QuarterEditStatus,
-} from '@/lib/quarters';
+  getCycleLayoutData,
+  getCycleEditStatus,
+  getStoredCycleStatusForEditStatus,
+  updateCycle,
+  updateCycleDraftEndDate,
+  updateCycleDraftStartDate,
+  type CycleEditStatus,
+} from '@/lib/cycles';
 
-const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'warning' | 'neutral'> = {
+const statusVariant: Record<CycleStatus, 'success' | 'info' | 'warning' | 'neutral'> = {
   active: 'success',
   draft: 'info',
   closed: 'warning',
   archived: 'neutral',
 };
 
-export default function QuarterLayoutClient({ children }: { children: React.ReactNode }) {
-  const { quarterId } = useParams<{ quarterId: string }>();
+export default function CycleLayoutClient({ children }: { children: React.ReactNode }) {
+  const { cycleId } = useParams<{ cycleId: string }>();
   const pathname = usePathname();
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [draftStartDate, setDraftStartDate] = useState('');
   const [draftEndDate, setDraftEndDate] = useState('');
   const [endDateManuallyEdited, setEndDateManuallyEdited] = useState(false);
-  const [draftStatus, setDraftStatus] = useState<QuarterEditStatus>('auto');
+  const [draftStatus, setDraftStatus] = useState<CycleEditStatus>('auto');
   const [saving, setSaving] = useState(false);
-  const data = useLiveQuery(() => getQuarterLayoutData(quarterId), [quarterId]);
+  const data = useLiveQuery(() => getCycleLayoutData(cycleId), [cycleId]);
 
   const quarter = data?.quarter ?? null;
-  const rawQuarter = data?.rawQuarter ?? null;
+  const rawCycle = data?.rawCycle ?? null;
 
   const navLinks = [
-    { href: `/quarters/${quarterId}`, label: 'Portfolio', exact: true },
-    { href: `/quarters/${quarterId}/capacity-planning`, label: 'Capacity Planning', exact: false },
-    { href: `/quarters/${quarterId}/people`, label: 'People', exact: false },
+    { href: `/cycles/${cycleId}`, label: 'Portfolio', exact: true },
+    { href: `/cycles/${cycleId}/capacity-planning`, label: 'Capacity Planning', exact: false },
+    { href: `/cycles/${cycleId}/people`, label: 'People', exact: false },
   ];
 
   function startEditing() {
-    if (!rawQuarter) return;
-    setDraftName(rawQuarter.name);
-    setDraftStartDate(rawQuarter.startDate);
-    setDraftEndDate(rawQuarter.endDate);
+    if (!rawCycle) return;
+    setDraftName(rawCycle.name);
+    setDraftStartDate(rawCycle.startDate);
+    setDraftEndDate(rawCycle.endDate);
     setEndDateManuallyEdited(false);
-    setDraftStatus(getQuarterEditStatus(rawQuarter.status));
+    setDraftStatus(getCycleEditStatus(rawCycle.status));
     setEditing(true);
   }
 
@@ -59,15 +59,15 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
     setEndDateManuallyEdited(false);
   }
 
-  async function saveQuarter() {
-    if (!rawQuarter || !draftName.trim() || !draftStartDate || !draftEndDate) return;
+  async function saveCycle() {
+    if (!rawCycle || !draftName.trim() || !draftStartDate || !draftEndDate) return;
     setSaving(true);
     try {
-      await updateQuarter(rawQuarter.id, {
+      await updateCycle(rawCycle.id, {
         name: draftName.trim(),
         startDate: draftStartDate,
         endDate: draftEndDate,
-        status: getStoredQuarterStatusForEditStatus(draftStatus),
+        status: getStoredCycleStatusForEditStatus(draftStatus),
       });
       setEditing(false);
       setEndDateManuallyEdited(false);
@@ -78,11 +78,11 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
 
   return (
     <div className="space-y-6">
-      {/* Quarter header */}
+      {/* Cycle header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
-          <Link href="/quarters" className="text-sm text-zinc-500 hover:text-zinc-200">
-            ← Quarters
+          <Link href="/cycles" className="text-sm text-zinc-500 hover:text-zinc-200">
+            ← Cycles
           </Link>
           {quarter && (
             <>
@@ -92,17 +92,17 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
             </>
           )}
         </div>
-        {quarter && rawQuarter && !editing && (
+        {quarter && rawCycle && !editing && (
           <button
             onClick={startEditing}
             className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:border-sky-400/30 hover:bg-white/8"
           >
-            Edit quarter
+            Edit cycle
           </button>
         )}
       </div>
 
-      {quarter && rawQuarter && editing && (
+      {quarter && rawCycle && editing && (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-40">
@@ -119,7 +119,7 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
                 type="date"
                 value={draftStartDate}
                 onChange={(e) => {
-                  const nextDraft = updateQuarterDraftStartDate(
+                  const nextDraft = updateCycleDraftStartDate(
                     {
                       startDate: draftStartDate,
                       endDate: draftEndDate,
@@ -140,7 +140,7 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
                 type="date"
                 value={draftEndDate}
                 onChange={(e) => {
-                  const nextDraft = updateQuarterDraftEndDate(
+                  const nextDraft = updateCycleDraftEndDate(
                     {
                       startDate: draftStartDate,
                       endDate: draftEndDate,
@@ -159,7 +159,7 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
               <label className="mb-1 block text-xs text-zinc-500">Status</label>
               <select
                 value={draftStatus}
-                onChange={(e) => setDraftStatus(e.target.value as QuarterEditStatus)}
+                onChange={(e) => setDraftStatus(e.target.value as CycleEditStatus)}
                 className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:border-sky-500/50 focus:outline-none"
               >
                 <option value="auto">Auto (date-based)</option>
@@ -170,7 +170,7 @@ export default function QuarterLayoutClient({ children }: { children: React.Reac
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={saveQuarter}
+                onClick={saveCycle}
                 disabled={!draftName.trim() || !draftStartDate || !draftEndDate || saving}
                 className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
               >

@@ -52,7 +52,7 @@ describe('project health', () => {
         {
           id: 'u1',
           projectId: 'p2',
-          quarterId: 'q1',
+          cycleId: 'q1',
           title: 'Dependency',
           description: '',
           resolved: false,
@@ -64,7 +64,7 @@ describe('project health', () => {
         {
           id: 'r1',
           projectId: 'p3',
-          quarterId: 'q1',
+          cycleId: 'q1',
           title: 'Scope',
           likelihood: 'High',
           impact: 'Low',
@@ -89,7 +89,7 @@ describe('project health', () => {
       endDate: '2026-06-30',
       status: 'active',
       createdAt: '2026-03-01T00:00:00.000Z',
-      createdFromQuarterId: null,
+      createdFromCycleId: null,
       capacityLineAfter: null,
       overhead: { items: [] },
     } as const;
@@ -103,21 +103,21 @@ describe('project health', () => {
       notes: '',
       createdAt: '2026-03-01T00:00:00.000Z',
     } as const;
-    const quarterPeople = [
+    const cyclePeople = [
       {
         id: 'qp-ben',
-        quarterId: quarter.id,
+        cycleId: quarter.id,
         personId: ben.id,
         subteamId: null,
         inactive: false,
-        quarterCapacity: 80,
+        cycleCapacity: 80,
         overheadOverride: null,
       },
     ];
     const allocations = [
       {
         id: 'a1',
-        quarterId: quarter.id,
+        cycleId: quarter.id,
         projectId: 'p-clean',
         personId: ben.id,
         role: 'Engineer',
@@ -127,7 +127,7 @@ describe('project health', () => {
       },
       {
         id: 'a2',
-        quarterId: quarter.id,
+        cycleId: quarter.id,
         projectId: 'p-second',
         personId: ben.id,
         role: 'Engineer',
@@ -140,7 +140,7 @@ describe('project health', () => {
     const overAllocatedProjectIds = getOverAllocatedProjectIds({
       quarter,
       people: [ben],
-      quarterPeople,
+      cyclePeople,
       allocations,
     });
     const healthByProject = buildProjectHealthMap(

@@ -1,37 +1,37 @@
 import { planSyncProjectToSubteamRoster } from './projects';
-import type { Allocation, Person, Project, Quarter, QuarterPerson, QuarterProject, Role } from './types';
+import type { Allocation, Person, Project, Cycle, CyclePerson, CycleProject, Role } from './types';
 
-export interface AddProjectToQuarterContext {
-  quarter: Quarter;
-  quarterProjects: QuarterProject[];
-  quarterPeople: QuarterPerson[];
+export interface AddProjectToCycleContext {
+  quarter: Cycle;
+  cycleProjects: CycleProject[];
+  cyclePeople: CyclePerson[];
   projects: Project[];
   people: Person[];
   allAllocations: Allocation[];
 }
 
-export interface AddProjectToQuarterPlan {
-  quarterProjectToCreate: QuarterProject;
-  quarterPeopleToCreate: QuarterPerson[];
+export interface AddProjectToCyclePlan {
+  cycleProjectToCreate: CycleProject;
+  cyclePeopleToCreate: CyclePerson[];
   allocationsToCreate: Allocation[];
 }
 
-function projectRoleCreatesActiveQuarterEntry(roleType: Role): boolean {
+function projectRoleCreatesActiveCycleEntry(roleType: Role): boolean {
   return roleType === 'DRI' || roleType === 'EM' || roleType === 'PM' || roleType === 'Stakeholder' || roleType === 'Engineer';
 }
 
-function createQuarterProjectRecord(
-  quarter: Quarter,
-  quarterProjectCount: number,
+function createCycleProjectRecord(
+  quarter: Cycle,
+  cycleProjectCount: number,
   project: Project,
   createId: () => string,
-): QuarterProject {
+): CycleProject {
   return {
     id: createId(),
-    quarterId: quarter.id,
+    cycleId: quarter.id,
     projectId: project.id,
     status: project.status,
-    priority: quarterProjectCount,
+    priority: cycleProjectCount,
     estimatedPersonWeeks: null,
     notes: '',
     plannedStartWeek: null,
@@ -40,19 +40,19 @@ function createQuarterProjectRecord(
   };
 }
 
-export function planAddProjectToQuarter(
-  context: AddProjectToQuarterContext,
+export function planAddProjectToCycle(
+  context: AddProjectToCycleContext,
   projectId: string,
   createId: () => string,
-): AddProjectToQuarterPlan | null {
-  const { quarter, quarterProjects, quarterPeople, projects, people, allAllocations } = context;
+): AddProjectToCyclePlan | null {
+  const { quarter, cycleProjects, cyclePeople, projects, people, allAllocations } = context;
   const project = projects.find((candidate) => candidate.id === projectId);
   if (!project) return null;
 
-  const templateAllocations = allAllocations.filter((allocation) => allocation.projectId === projectId && allocation.quarterId === '');
+  const templateAllocations = allAllocations.filter((allocation) => allocation.projectId === projectId && allocation.cycleId === '');
   const derivedSubteamAllocations = templateAllocations.length === 0
     ? planSyncProjectToSubteamRoster({
-      allocations: allAllocations.filter((allocation) => allocation.quarterId === quarter.id),
+      allocations: allAllocations.filter((allocation) => allocation.cycleId === quarter.id),
       createId,
       project,
       projects,
@@ -61,20 +61,20 @@ export function planAddProjectToQuarter(
     })
     : [];
   const sourceAllocations = templateAllocations.length > 0 ? templateAllocations : derivedSubteamAllocations;
-  const quarterPersonIds = new Set(quarterPeople.map((entry) => entry.personId));
-  const quarterPeopleToCreate = sourceAllocations
-    .filter((allocation) => !quarterPersonIds.has(allocation.personId))
+  const cyclePersonIds = new Set(cyclePeople.map((entry) => entry.personId));
+  const cyclePeopleToCreate = sourceAllocations
+    .filter((allocation) => !cyclePersonIds.has(allocation.personId))
     .map((allocation) => {
       const person = people.find((candidate) => candidate.id === allocation.personId);
       if (!person) return null;
-      quarterPersonIds.add(allocation.personId);
+      cyclePersonIds.add(allocation.personId);
       return {
         id: createId(),
-        quarterId: quarter.id,
+        cycleId: quarter.id,
         personId: allocation.personId,
         subteamId: project.subteamId,
         inactive: false,
-        quarterCapacity: person.defaultCapacity,
+        cycleCapacity: person.defaultCapacity,
         overheadOverride: null,
       };
     })
@@ -83,14 +83,14 @@ export function planAddProjectToQuarter(
   const allocationsToCreate = sourceAllocations.map((allocation) => ({
     ...allocation,
     id: createId(),
-    quarterId: quarter.id,
+    cycleId: quarter.id,
     startDate: quarter.startDate,
     endDate: null,
   }));
 
   return {
-    quarterProjectToCreate: createQuarterProjectRecord(quarter, quarterProjects.length, project, createId),
-    quarterPeopleToCreate,
+    cycleProjectToCreate: createCycleProjectRecord(quarter, cycleProjects.length, project, createId),
+    cyclePeopleToCreate,
     allocationsToCreate,
   };
 }

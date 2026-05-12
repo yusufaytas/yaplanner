@@ -8,11 +8,11 @@ All data stays in your browser via IndexedDB. No backend and no telemetry. Expor
 
 ## What it does
 
-- **People, subteams, and projects** are global — they exist across quarters
-- **Quarters** are planning lenses: allocations, capacity, and warnings are all quarter-scoped
-- A project can span many quarters, with per-quarter estimated and allocated person-weeks tracked separately
+- **People, subteams, and projects** are global — they exist across planning cycles
+- **Cycles** are planning lenses: allocations, capacity, and warnings are all cycle-scoped
+- A project can span many cycles, with per-cycle estimated and allocated person-weeks tracked separately
 - Percentage-based allocation per person per project, with start and end dates
-- Capacity planning with overhead items (PTO, meetings, oncall, etc.) applied at the quarter level, with per-person overrides
+- Capacity planning with overhead items (PTO, meetings, oncall, etc.) applied at the cycle level, with per-person overrides
 - Project health signal (green / yellow / red) derived from open risks, unknowns, and over-capacity delivery members
 - Engineer availability filter — only engineers with remaining capacity appear in project assignment dropdowns
 - Export full data as JSON; import to restore or share
@@ -53,15 +53,15 @@ In Google Cloud, create a Web OAuth client and add your app URL to **Authorized 
 | `/subteams` | All subteams |
 | `/subteams/[id]` | Subteam detail |
 | `/projects` | All projects |
-| `/projects/[id]` | Project page — health, quarter planning, delivery team, risks, unknowns |
-| `/quarters` | Quarter list |
-| `/quarters/[id]` | Portfolio dashboard — priority-ordered project list with capacity line |
-| `/quarters/[id]/capacity-planning` | Quarter overhead and per-person capacity overrides |
-| `/quarters/[id]/people` | Add/remove engineers from a quarter, view estimated vs allocated person-weeks |
+| `/projects/[id]` | Project page — health, cycle planning, delivery team, risks, unknowns |
+| `/cycles` | Cycle list |
+| `/cycles/[id]` | Portfolio dashboard — priority-ordered project list with capacity line |
+| `/cycles/[id]/capacity-planning` | Cycle overhead and per-person capacity overrides |
+| `/cycles/[id]/people` | Add/remove engineers from a cycle, view estimated vs allocated person-weeks |
 
 ## Capacity model
 
-Person-weeks available per engineer per quarter:
+Person-weeks available per engineer per cycle:
 
 ```
 baseCapacity = quarterPerson.quarterCapacity ?? person.defaultCapacity
@@ -75,8 +75,8 @@ Overhead items compound sequentially. A `pct` item reduces by percentage; a `wee
 All allocation math uses **effective capacity**, not base capacity.
 
 That means:
-- `quarterPerson.quarterCapacity` sets the base for that quarter
-- quarter overhead or person overhead override reduces that to `effectivePct`
+- `quarterPerson.quarterCapacity` sets the base for that cycle
+- cycle overhead or person overhead override reduces that to `effectivePct`
 - project allocation percentages are constrained against that effective capacity
 - if a person is over effective capacity, the UI shows them as over capacity and project health rises to at least yellow
 
@@ -86,12 +86,12 @@ Project reserved person-weeks are computed from explicit `Allocation` rows:
 projectReservedPW = availablePW × (allocationPct / effectivePct)
 ```
 
-If a person has `effectivePct = 40` and is allocated `10` to a project, that project is consuming 25% of their usable quarter capacity.
+If a person has `effectivePct = 40` and is allocated `10` to a project, that project is consuming 25% of their usable cycle capacity.
 
 ## Engineer assignment rules
 
 An engineer only appears in the project assignment dropdown if:
-- They have a `QuarterPerson` record for the active quarter (added via the People tab)
+- They have a `QuarterPerson` record for the active cycle (added via the People tab)
 - They are not marked inactive
 - Their remaining capacity after existing project allocations is > 0
 
@@ -105,7 +105,7 @@ An engineer only appears in the project assignment dropdown if:
 - Sibling-project propagation only applies to delivery roles: `DRI` and `Engineer`.
 - `EM`, `PM`, and `Stakeholder` stay project-specific.
 - Every project must have a `DRI`.
-- `percentage` on `Allocation` is project share of the person’s effective quarter capacity.
+- `percentage` on `Allocation` is project share of the person’s effective cycle capacity.
 - `startDate` / `endDate` on `Allocation` preserve history.
 - Removing someone from a project normally ends their active allocation rows instead of deleting them.
 - Short-lived mistaken assignments are not preserved as history: if an active allocation started less than 7 days ago, removing that person deletes the allocation instead of end-dating it.

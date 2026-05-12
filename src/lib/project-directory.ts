@@ -9,15 +9,15 @@ export interface ProjectLeadershipMaps {
   pmByProject: Map<string, string>;
 }
 
-function isActiveAllocation(allocation: Allocation, activeQuarterId: string | null): boolean {
-  if (activeQuarterId !== null && allocation.quarterId !== activeQuarterId) return false;
+function isActiveAllocation(allocation: Allocation, activeCycleId: string | null): boolean {
+  if (activeCycleId !== null && allocation.cycleId !== activeCycleId) return false;
   return allocation.endDate === null;
 }
 
 export function buildProjectLeadershipMaps(
   projects: Project[],
   allocations: Allocation[],
-  activeQuarterId: string | null,
+  activeCycleId: string | null,
 ): ProjectLeadershipMaps {
   const driByProject = new Map<string, string>();
   const emByProject = new Map<string, string>();
@@ -25,7 +25,7 @@ export function buildProjectLeadershipMaps(
 
   for (const project of projects) {
     const projectAllocations = allocations.filter(
-      (allocation) => allocation.projectId === project.id && isActiveAllocation(allocation, activeQuarterId),
+      (allocation) => allocation.projectId === project.id && isActiveAllocation(allocation, activeCycleId),
     );
     const dri = projectAllocations.find((allocation) => allocation.role === 'DRI');
     const em = projectAllocations.find((allocation) => allocation.role === 'EM');

@@ -23,16 +23,17 @@ import {
   updateProjectTags,
 } from '@/lib/projects';
 import {
+  getCyclePersonCapacitySummary,
   getAssignableEngineers,
   getPersonRemainingAllocationPct,
-  getQuarterPersonProjectSummary,
+  getCyclePersonProjectSummary,
   personTracksCapacity,
 } from '@/lib/person-capacity';
-import { getActiveQuarter } from '@/lib/quarters';
+import { getActiveCycle } from '@/lib/cycles';
 import { projectHealthMeta, buildProjectHealthMap, getOverAllocatedProjectIds } from '@/lib/project-health';
 import { getProjectTags } from '@/lib/project-tags';
 import { Badge } from '@/components/ui/Badge';
-import type { ProjectStatus, QuarterPerson, QuarterStatus, RiskImpact, RiskLikelihood, Role } from '@/lib/types';
+import type { ProjectStatus, CyclePerson, CycleStatus, RiskImpact, RiskLikelihood, Role } from '@/lib/types';
 
 const STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string }> = [
   { value: 'Proposed', label: 'Proposed' },
@@ -142,9 +143,9 @@ export default function ProjectPageClient() {
   const subteams = data?.subteams ?? [];
   const quarters = data?.quarters ?? [];
   const allocations = data?.allocations ?? [];
-  const quarterPeople = data?.quarterPeople ?? [];
-  const quarterProjects = data?.quarterProjects ?? [];
-  const activeQuarter = getActiveQuarter(quarters);
+  const cyclePeople = data?.cyclePeople ?? [];
+  const cycleProjects = data?.cycleProjects ?? [];
+  const activeCycle = getActiveCycle(quarters);
   const peopleById = new Map(people.map((person) => [person.id, person]));
   const projectSubteam = project ? (subteams.find((subteam) => subteam.id === project.subteamId) ?? null) : null;
   const projectAllocations = project ? allocations.filter((allocation) => allocation.projectId === project.id) : [];
@@ -152,6 +153,24 @@ export default function ProjectPageClient() {
   const currentAllocations = projectAllocations.filter((allocation) => allocation.endDate === null);
   const historicalAllocations = projectAllocations.filter((allocation) => allocation.endDate !== null);
   const historicalProjectRoles = historicalAllocations.filter((allocation) => allocation.role === 'EM' || allocation.role === 'PM' || allocation.role === 'Stakeholder');
+  const currentSubteamProjectIds = new Set(
+    project
+      ? project.subteamId
+        ? projects.filter((candidate) => candidate.subteamId === project.subteamId).map((candidate) => candidate.id)
+        : [project.id]
+      : [],
+  );
+  const hasActiveDri = allocations.some(
+    (allocation) =>
+      allocation.projectId !== null
+      && currentSubteamProjectIds.has(allocation.projectId)
+      && allocation.role === 'DRI'
+      && allocation.endDate === null,
+  );
+  const roleOptions = hasActiveDri
+    ? ALL_ROLE_OPTIONS
+    : ALL_ROLE_OPTIONS.filter((option) => option.value !== 'Engineer');
+  const effectiveNewMemberRole = !hasActiveDri && newMemberRole === 'Engineer' ? 'DRI' : newMemberRole;
 
   // People already on the project (current allocations)
   const currentMemberPersonIds = new Set(currentAllocations.map((a) => a.personId));
@@ -161,24 +180,24 @@ export default function ProjectPageClient() {
   const resolvedProject = project;
   const showCompletedProjectHistoryInline = resolvedProject.status === 'Complete';
   const visibleTeamAllocations = showCompletedProjectHistoryInline ? projectAllocations : currentAllocations;
-  const overAllocatedProjectIds = activeQuarter
-    ? getOverAllocatedProjectIds({ quarter: activeQuarter, people, quarterPeople, allocations })
+  const overAllocatedProjectIds = activeCycle
+    ? getOverAllocatedProjectIds({ quarter: activeCycle, people, cyclePeople, allocations })
     : undefined;
   const healthMap = buildProjectHealthMap([resolvedProject], undefined, undefined, overAllocatedProjectIds);
   const health = healthMap.get(resolvedProject.id);
   const healthMeta = health ? projectHealthMeta[health] : null;
   const tags = getProjectTags(resolvedProject);
-  const associatedQuarters = quarterProjects
-    .map((quarterProject) => {
-      const quarter = quarters.find((entry) => entry.id === quarterProject.quarterId);
-      return quarter ? { quarter, quarterProject } : null;
+  const associatedCycles = cycleProjects
+    .map((cycleProject) => {
+      const quarter = quarters.find((entry) => entry.id === cycleProject.cycleId);
+      return quarter ? { quarter, cycleProject } : null;
     })
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .sort((a, b) => a.quarter.startDate.localeCompare(b.quarter.startDate));
 
   // Engineers/DRIs with actual remaining capacity in the active quarter
-  const assignableEngineerIds = activeQuarter
-    ? new Set(getAssignableEngineers(people, quarterPeople, activeQuarter, allocations).map((p) => p.id))
+  const assignableEngineerIds = activeCycle
+    ? new Set(getAssignableEngineers(people, cyclePeople, activeCycle, allocations).map((p) => p.id))
     : new Set(people.filter((p) => {
         if (!personTracksCapacity(p.role)) return false;
         const totalAllocated = allocations.filter((a) => a.personId === p.id && a.endDate === null && a.percentage > 0).reduce((sum, a) => sum + a.percentage, 0);
@@ -188,6 +207,7 @@ export default function ProjectPageClient() {
   // Role-aware addable people list
   const addableForRole = (role: Role) => people.filter((person) => {
     if (currentMemberPersonIds.has(person.id)) return false;
+    if (role === 'Engineer' && !hasActiveDri) return false;
     if (role === 'Engineer' || role === 'DRI') {
       return assignableEngineerIds.has(person.id);
     }
@@ -200,12 +220,12 @@ export default function ProjectPageClient() {
     const person = peopleById.get(personId);
     if (!person || !personTracksCapacity(person.role)) return null;
 
-    if (activeQuarter) {
-      const qp = quarterPeople.find((e) => e.personId === personId && e.quarterId === activeQuarter.id) as QuarterPerson | undefined;
+    if (activeCycle) {
+      const qp = cyclePeople.find((e) => e.personId === personId && e.cycleId === activeCycle.id) as CyclePerson | undefined;
       return getPersonRemainingAllocationPct({
         person,
-        quarterPerson: qp,
-        quarterId: activeQuarter.id,
+        cyclePerson: qp,
+        cycleId: activeCycle.id,
         allocations,
       });
     }
@@ -217,11 +237,32 @@ export default function ProjectPageClient() {
   }
 
   function getCapacitySummary(personId: string) {
-    if (!activeQuarter) return null;
+    if (!activeCycle) return null;
     const person = peopleById.get(personId);
     if (!person || !personTracksCapacity(person.role)) return null;
-    const qp = quarterPeople.find((entry) => entry.personId === personId && entry.quarterId === activeQuarter.id) as QuarterPerson | undefined;
-    return getQuarterPersonProjectSummary(activeQuarter, person, qp, allocations);
+    const qp = cyclePeople.find((entry) => entry.personId === personId && entry.cycleId === activeCycle.id) as CyclePerson | undefined;
+    return getCyclePersonProjectSummary(activeCycle, person, qp, allocations);
+  }
+
+  function getProjectAllocationSummary(personId: string, percentage: number) {
+    const person = peopleById.get(personId);
+    if (!person || !personTracksCapacity(person.role)) return null;
+    if (!activeCycle) {
+      return {
+        percentage,
+        allocatedWeeks: null as number | null,
+      };
+    }
+
+    const qp = cyclePeople.find((entry) => entry.personId === personId && entry.cycleId === activeCycle.id) as CyclePerson | undefined;
+    const capacity = getCyclePersonCapacitySummary(activeCycle, person, qp);
+    const allocatedWeeks = capacity.effectiveCapacity > 0
+      ? Number((capacity.availableWeeks * (percentage / capacity.effectiveCapacity)).toFixed(1))
+      : 0;
+    return {
+      percentage,
+      allocatedWeeks,
+    };
   }
 
   async function saveProjectStatus(status: ProjectStatus) {
@@ -231,15 +272,15 @@ export default function ProjectPageClient() {
   async function addMember() {
     if (!newMemberPersonId) return;
     await addProjectMember({
-      activeQuarter: activeQuarter ?? null,
+      activeCycle: activeCycle ?? null,
       allocations,
       personId: newMemberPersonId,
       people,
       percentage: newMemberPercentage,
       project: resolvedProject,
       projects,
-      quarterPeople,
-      role: newMemberRole,
+      cyclePeople,
+      role: effectiveNewMemberRole,
     });
 
     setNewMemberPersonId('');
@@ -271,9 +312,9 @@ export default function ProjectPageClient() {
   }
 
   async function addProjectUnknown() {
-    if (!activeQuarter || !newUnknownTitle.trim()) return;
+    if (!activeCycle || !newUnknownTitle.trim()) return;
     await createProjectUnknown({
-      activeQuarter,
+      activeCycle,
       description: newUnknownDescription,
       project: resolvedProject,
       title: newUnknownTitle,
@@ -288,9 +329,9 @@ export default function ProjectPageClient() {
   }
 
   async function addProjectRisk() {
-    if (!activeQuarter || !newRiskTitle.trim()) return;
+    if (!activeCycle || !newRiskTitle.trim()) return;
     await createProjectRisk({
-      activeQuarter,
+      activeCycle,
       impact: newRiskImpact,
       likelihood: newRiskLikelihood,
       mitigationNote: newRiskMitigation,
@@ -394,7 +435,7 @@ export default function ProjectPageClient() {
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-zinc-500">Role</label>
               <select
-                value={newMemberRole}
+                value={effectiveNewMemberRole}
                 onChange={(e) => {
                   setNewMemberRole(e.target.value as Role);
                   setNewMemberPersonId('');
@@ -402,11 +443,14 @@ export default function ProjectPageClient() {
                 }}
                 className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
               >
-                {ALL_ROLE_OPTIONS.map((opt) => (
+                {roleOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </div>
+            {!hasActiveDri && (
+              <p className="basis-full text-xs text-amber-300">Assign a DRI before adding engineers.</p>
+            )}
             <div className="flex flex-col gap-1 min-w-[180px]">
               <label className="text-[11px] text-zinc-500">Person</label>
               <select
@@ -414,7 +458,7 @@ export default function ProjectPageClient() {
                 onChange={(e) => {
                   const personId = e.target.value;
                   setNewMemberPersonId(personId);
-                  if (personId && (newMemberRole === 'Engineer' || newMemberRole === 'DRI')) {
+                  if (personId && (effectiveNewMemberRole === 'Engineer' || effectiveNewMemberRole === 'DRI')) {
                     const remaining = getPersonRemainingPct(personId);
                     setNewMemberPercentage(remaining !== null ? Math.max(1, remaining) : 100);
                   }
@@ -422,7 +466,7 @@ export default function ProjectPageClient() {
                 className="rounded border border-white/10 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
               >
                 <option value="">Select person…</option>
-                {addableForRole(newMemberRole).map((person) => {
+                {addableForRole(effectiveNewMemberRole).map((person) => {
                   const remaining = personTracksCapacity(person.role) ? getPersonRemainingPct(person.id) : null;
                   const capLabel = remaining !== null ? ` · ${remaining}% free` : '';
                   return (
@@ -433,15 +477,15 @@ export default function ProjectPageClient() {
                 })}
               </select>
             </div>
-            {(newMemberRole === 'Engineer' || newMemberRole === 'DRI') && (() => {
+            {(effectiveNewMemberRole === 'Engineer' || effectiveNewMemberRole === 'DRI') && (() => {
               const selectedPerson = peopleById.get(newMemberPersonId);
-              const maxPct = selectedPerson && activeQuarter
+              const maxPct = selectedPerson && activeCycle
                 ? Math.max(1, getProjectMemberAllocationMax({
                   allocations,
                   person: selectedPerson,
                   projectId: resolvedProject.id,
-                  quarterId: activeQuarter.id,
-                  quarterPeople,
+                  cycleId: activeCycle.id,
+                  cyclePeople,
                 }))
                 : newMemberPersonId ? Math.max(1, getPersonRemainingPct(newMemberPersonId) ?? 100) : 100;
               return (
@@ -478,6 +522,9 @@ export default function ProjectPageClient() {
               if (!person) return null;
               const isHistoricalAllocation = alloc.endDate !== null;
               const cap = !isHistoricalAllocation && (alloc.role === 'Engineer' || alloc.role === 'DRI') ? getCapacitySummary(person.id) : null;
+              const projectAllocation = !isHistoricalAllocation && (alloc.role === 'Engineer' || alloc.role === 'DRI')
+                ? getProjectAllocationSummary(person.id, alloc.percentage)
+                : null;
               const initials = person.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
               return (
                 <div key={alloc.id} className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 hover:border-white/10 transition-colors">
@@ -496,11 +543,11 @@ export default function ProjectPageClient() {
                       <p className="mt-0.5 text-xs text-zinc-500">
                         {alloc.startDate ?? '—'} → {alloc.endDate ?? '—'}
                       </p>
-                    ) : cap && (
-                      <p className={`mt-0.5 text-xs ${cap.overAllocated ? 'text-rose-400' : 'text-zinc-500'}`}>
-                        {cap.overAllocated
-                          ? `Over capacity · 0w free`
-                          : `${Math.max(0, cap.remainingWeeks)}w free · ${cap.totalAllocatedPct}% allocated`}
+                    ) : projectAllocation && (
+                      <p className={`mt-0.5 text-xs ${cap?.overAllocated ? 'text-rose-400' : 'text-zinc-500'}`}>
+                        {projectAllocation.allocatedWeeks !== null
+                          ? `${projectAllocation.allocatedWeeks}w on project · ${projectAllocation.percentage}% allocated`
+                          : `${projectAllocation.percentage}% allocated to project`}
                       </p>
                     )}
                   </div>
@@ -544,36 +591,36 @@ export default function ProjectPageClient() {
         )}
       </section>
 
-      {/* ── Quarters ─────────────────────────────────────────────── */}
-      {associatedQuarters.length > 0 && (
+      {/* ── Cycles ─────────────────────────────────────────────── */}
+      {associatedCycles.length > 0 && (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200">Quarters</h2>
+          <h2 className="text-sm font-semibold text-zinc-200">Cycles</h2>
           <div className="space-y-2">
-            {[...associatedQuarters].reverse().map(({ quarter, quarterProject }) => {
-              const statusVariant: Record<QuarterStatus, 'success' | 'info' | 'neutral' | 'warning'> = {
+            {[...associatedCycles].reverse().map(({ quarter, cycleProject }) => {
+              const statusVariant: Record<CycleStatus, 'success' | 'info' | 'neutral' | 'warning'> = {
                 active: 'success',
                 draft: 'info',
                 closed: 'neutral',
                 archived: 'warning',
               };
-              const statusLabel: Record<QuarterStatus, string> = {
+              const statusLabel: Record<CycleStatus, string> = {
                 active: 'Active',
                 draft: 'Upcoming',
                 closed: 'Closed',
                 archived: 'Archived',
               };
-              const hasMeta = quarterProject.priority !== null
-                || quarterProject.estimatedPersonWeeks !== null
-                || quarterProject.targetMilestone
-                || quarterProject.notes;
+              const hasMeta = cycleProject.priority !== null
+                || cycleProject.estimatedPersonWeeks !== null
+                || cycleProject.targetMilestone
+                || cycleProject.notes;
               return (
                 <div
-                  key={quarterProject.id}
+                  key={cycleProject.id}
                   className="rounded-xl border border-white/5 bg-white/[0.02] p-3 hover:border-white/10 transition-colors"
                 >
                   <div className="flex items-center gap-3 flex-wrap">
                     <Link
-                      href={`/quarters/${quarter.id}`}
+                      href={`/cycles/${quarter.id}`}
                       className="text-sm font-semibold text-zinc-100 hover:text-sky-200 transition-colors"
                     >
                       {quarter.name}
@@ -584,32 +631,32 @@ export default function ProjectPageClient() {
                     <span className="text-xs text-zinc-500 tabular-nums">
                       {quarter.startDate} – {quarter.endDate}
                     </span>
-                    {quarterProject.priority !== null && (
+                    {cycleProject.priority !== null && (
                       <span className="ml-auto text-xs text-zinc-500">
-                        Priority <span className="font-semibold text-zinc-300">#{quarterProject.priority + 1}</span>
+                        Priority <span className="font-semibold text-zinc-300">#{cycleProject.priority + 1}</span>
                       </span>
                     )}
                   </div>
                   {hasMeta && (
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-0.5">
-                      {quarterProject.estimatedPersonWeeks !== null && (
+                      {cycleProject.estimatedPersonWeeks !== null && (
                         <span className="text-xs text-zinc-500">
                           Estimate{' '}
                           <span className="font-medium text-zinc-300">
-                            {quarterProject.estimatedPersonWeeks}pw
+                            {cycleProject.estimatedPersonWeeks}pw
                           </span>
                         </span>
                       )}
-                      {quarterProject.targetMilestone && (
+                      {cycleProject.targetMilestone && (
                         <span className="text-xs text-zinc-500">
                           Milestone{' '}
                           <span className="font-medium text-zinc-300">
-                            {quarterProject.targetMilestone}
+                            {cycleProject.targetMilestone}
                           </span>
                         </span>
                       )}
-                      {quarterProject.notes && (
-                        <span className="text-xs text-zinc-400 italic">{quarterProject.notes}</span>
+                      {cycleProject.notes && (
+                        <span className="text-xs text-zinc-400 italic">{cycleProject.notes}</span>
                       )}
                     </div>
                   )}
@@ -760,13 +807,13 @@ export default function ProjectPageClient() {
             />
             <button
               onClick={addProjectUnknown}
-              disabled={!newUnknownTitle.trim() || !activeQuarter}
+              disabled={!newUnknownTitle.trim() || !activeCycle}
               className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Add
             </button>
-            {!activeQuarter && (
-              <p className="text-xs text-zinc-600">No active quarter — unknowns require one.</p>
+            {!activeCycle && (
+              <p className="text-xs text-zinc-600">No active cycle — unknowns require one.</p>
             )}
           </div>
         )}
@@ -899,13 +946,13 @@ export default function ProjectPageClient() {
             />
             <button
               onClick={addProjectRisk}
-              disabled={!newRiskTitle.trim() || !activeQuarter}
+              disabled={!newRiskTitle.trim() || !activeCycle}
               className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Add
             </button>
-            {!activeQuarter && (
-              <p className="text-xs text-zinc-600">No active quarter — risks require one.</p>
+            {!activeCycle && (
+              <p className="text-xs text-zinc-600">No active cycle — risks require one.</p>
             )}
           </div>
         )}

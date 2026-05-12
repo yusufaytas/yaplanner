@@ -1,4 +1,4 @@
-import { listResolvedQuarters } from './quarters';
+import { listResolvedCycles } from './cycles';
 import { db } from './db';
 import type { Allocation, Person, Role } from './types';
 
@@ -52,15 +52,15 @@ export async function getPeoplePageData() {
 }
 
 export async function getPersonPageData(personId: string) {
-  const [person, subteams, allocations, projects, quarters, quarterPeople] = await Promise.all([
+  const [person, subteams, allocations, projects, quarters, cyclePeople] = await Promise.all([
     db.people.get(personId),
     db.subteams.orderBy('name').toArray(),
     db.allocations.where('personId').equals(personId).toArray(),
     db.projects.toArray(),
-    listResolvedQuarters(),
-    db.quarterPeople.where('personId').equals(personId).toArray(),
+    listResolvedCycles(),
+    db.cyclePeople.where('personId').equals(personId).toArray(),
   ]);
-  return { person, subteams, allocations, projects, quarters, quarterPeople };
+  return { person, subteams, allocations, projects, quarters, cyclePeople };
 }
 
 export async function createPerson(params: {
@@ -83,7 +83,19 @@ export async function createPerson(params: {
 }
 
 export async function deletePerson(personId: string) {
-  await db.people.delete(personId);
+  await db.transaction('rw', [db.people, db.cyclePeople, db.allocations], async () => {
+    const cyclePeople = await db.cyclePeople.where('personId').equals(personId).toArray();
+    const allocations = await db.allocations.where('personId').equals(personId).toArray();
+
+    if (cyclePeople.length > 0) {
+      await db.cyclePeople.bulkDelete(cyclePeople.map((entry) => entry.id));
+    }
+    if (allocations.length > 0) {
+      await db.allocations.bulkDelete(allocations.map((entry) => entry.id));
+    }
+
+    await db.people.delete(personId);
+  });
 }
 
 export async function updatePerson(personId: string, patch: Partial<Person>) {

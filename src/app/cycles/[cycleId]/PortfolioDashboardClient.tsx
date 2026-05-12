@@ -7,41 +7,37 @@ import Link from 'next/link';
 import { ProjectStatusBadge } from '@/components/projects/ProjectStatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { InlineEditNumber } from '@/components/ui/InlineEdit';
-import type { QuarterProject } from '@/lib/types';
-import { getProjectCapacitySummary, getQuarterCapacitySummary } from '@/lib/person-capacity';
-import { getAddableProjects, getAutoCapacityLineAfter, sortQuarterProjects } from '@/lib/quarter-portfolio';
-import { planAddProjectToQuarter } from '@/lib/quarter-projects';
+import type { CycleProject } from '@/lib/types';
+import { getProjectCapacitySummary, getCycleCapacitySummary } from '@/lib/person-capacity';
+import { getAddableProjects, getAutoCapacityLineAfter, sortCycleProjects } from '@/lib/cycle-portfolio';
+import { planAddProjectToCycle } from '@/lib/cycle-projects';
 import {
-  addProjectToQuarter as persistAddProjectToQuarter,
-  getAddProjectToQuarterData,
+  addProjectToCycle as persistAddProjectToCycle,
+  getAddProjectToCycleData,
   getPortfolioDashboardData,
   savePriorityOrder,
-  updateQuarter,
-  updateQuarterProjectEstimate,
-} from '@/lib/quarters';
+  updateCycleProjectEstimate,
+} from '@/lib/cycles';
 
 function uid() { return crypto.randomUUID(); }
 
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function PortfolioDashboardClient() {
-  const { quarterId } = useParams<{ quarterId: string }>();
+  const { cycleId } = useParams<{ cycleId: string }>();
 
   // drag state — only indices, no copies of data
   const dragIndexRef = useRef<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  // are we dragging the capacity line itself?
-  const draggingLineRef = useRef(false);
-  const [draggingLine, setDraggingLine] = useState(false);
 
   const [addingProject, setAddingProject] = useState(false);
   const [newProjectId, setNewProjectId] = useState('');
 
-  const data = useLiveQuery(() => getPortfolioDashboardData(quarterId), [quarterId]);
+  const data = useLiveQuery(() => getPortfolioDashboardData(cycleId), [cycleId]);
 
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
 
-  const { quarter, quarterProjects, projects, people, quarterPeople, subteams, allocations } = data;
+  const { quarter, cycleProjects, projects, people, cyclePeople, subteams, allocations } = data;
 
   const projectById = new Map(projects.map((p) => [p.id, p]));
   const personById = new Map(people.map((p) => [p.id, p]));
@@ -55,25 +51,25 @@ export default function PortfolioDashboardClient() {
     allocationsByProject.set(allocation.projectId, arr);
   }
 
-  const sorted = sortQuarterProjects(quarterProjects);
+  const sorted = sortCycleProjects(cycleProjects);
 
-  const capacitySummary = quarter ? getQuarterCapacitySummary(quarter, people, quarterPeople) : null;
-  const addableProjects = getAddableProjects(projects, quarterProjects);
+  const capacitySummary = quarter ? getCycleCapacitySummary(quarter, people, cyclePeople) : null;
+  const addableProjects = getAddableProjects(projects, cycleProjects);
 
   async function addProject() {
     if (!newProjectId || !quarter) return;
-    const { allAllocations } = await getAddProjectToQuarterData(quarterId, newProjectId);
-    const plan = planAddProjectToQuarter({
+    const { allAllocations } = await getAddProjectToCycleData(cycleId, newProjectId);
+    const plan = planAddProjectToCycle({
       quarter,
-      quarterProjects,
-      quarterPeople,
+      cycleProjects,
+      cyclePeople,
       projects,
       people,
       allAllocations,
     }, newProjectId, uid);
     if (!plan) return;
 
-    await persistAddProjectToQuarter(plan);
+    await persistAddProjectToCycle(plan);
 
     setNewProjectId('');
     setAddingProject(false);
@@ -90,20 +86,17 @@ export default function PortfolioDashboardClient() {
     capacitySummary?.totalAvailablePersonWeeks ?? null,
   );
 
-  // capacityLineAfter: index after which the red zone starts (0-based, so 2 means after row index 2)
-  const lineAfter = quarter?.capacityLineAfter ?? autoCapacityLineAfter;
+  // capacityLineAfter is always auto-calculated from cumulative estimates vs total capacity
+  const lineAfter = autoCapacityLineAfter;
 
   // ── drag handlers for rows ──────────────────────────────────────────────
 
   function handleRowDragStart(e: React.DragEvent, index: number) {
-    draggingLineRef.current = false;
-    setDraggingLine(false);
     dragIndexRef.current = index;
     e.dataTransfer.effectAllowed = 'move';
   }
 
   function handleRowDragOver(e: React.DragEvent, index: number) {
-    if (draggingLineRef.current) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setDragOverIndex(index);
@@ -111,7 +104,6 @@ export default function PortfolioDashboardClient() {
 
   async function handleRowDrop(e: React.DragEvent, dropIndex: number) {
     e.preventDefault();
-    if (draggingLineRef.current) return;
     const from = dragIndexRef.current;
     if (from === null || from === dropIndex) {
       setDragOverIndex(null);
@@ -128,54 +120,9 @@ export default function PortfolioDashboardClient() {
   function handleDragEnd() {
     setDragOverIndex(null);
     dragIndexRef.current = null;
-    draggingLineRef.current = false;
-    setDraggingLine(false);
   }
 
   // ── drag handlers for the capacity line ────────────────────────────────
-
-  function handleLineDragStart(e: React.DragEvent) {
-    draggingLineRef.current = true;
-    setDraggingLine(true);
-    e.dataTransfer.effectAllowed = 'move';
-    // ghost image: tiny transparent element
-    const ghost = document.createElement('div');
-    ghost.style.width = '1px';
-    ghost.style.height = '1px';
-    ghost.style.opacity = '0';
-    document.body.appendChild(ghost);
-    e.dataTransfer.setDragImage(ghost, 0, 0);
-    setTimeout(() => document.body.removeChild(ghost), 0);
-  }
-
-  async function handleLineDropOnRow(e: React.DragEvent, index: number) {
-    if (!draggingLineRef.current) return;
-    e.preventDefault();
-    draggingLineRef.current = false;
-    setDraggingLine(false);
-    setDragOverIndex(null);
-    if (!quarter) return;
-    // Drop on row index means line goes AFTER that row
-    await updateQuarter(quarter.id, { capacityLineAfter: index });
-  }
-
-  async function handleLineDragOverRow(e: React.DragEvent) {
-    if (!draggingLineRef.current) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  }
-
-  async function moveLineUp() {
-    if (!quarter) return;
-    const current = quarter.capacityLineAfter ?? sorted.length - 1;
-    if (current > 0) await updateQuarter(quarter.id, { capacityLineAfter: current - 1 });
-  }
-
-  async function moveLineDown() {
-    if (!quarter) return;
-    const current = quarter.capacityLineAfter ?? 0;
-    if (current < sorted.length - 1) await updateQuarter(quarter.id, { capacityLineAfter: current + 1 });
-  }
 
   // ── render ──────────────────────────────────────────────────────────────
 
@@ -184,6 +131,14 @@ export default function PortfolioDashboardClient() {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-zinc-100">Portfolio</h2>
         <div className="flex items-center gap-3">
+          <p className="text-xs text-zinc-500">
+            Drag rows to reorder
+            {capacitySummary && (
+              <span className="ml-2 text-zinc-600">
+                Total capacity: {capacitySummary.totalAvailablePersonWeeks}pw
+              </span>
+            )}
+          </p>
           {!addingProject && (
             <button
               onClick={() => { setNewProjectId(''); setAddingProject(true); }}
@@ -192,14 +147,6 @@ export default function PortfolioDashboardClient() {
               + Add project
             </button>
           )}
-          <p className="text-xs text-zinc-500">
-            Drag rows to reorder · Drag the capacity line to reposition it
-            {capacitySummary && (
-              <span className="ml-2 text-zinc-600">
-                Total capacity: {capacitySummary.totalAvailablePersonWeeks}pw
-              </span>
-            )}
-          </p>
         </div>
       </div>
 
@@ -230,15 +177,15 @@ export default function PortfolioDashboardClient() {
             Cancel
           </button>
           {addableProjects.length === 0 && (
-            <span className="text-xs text-zinc-500">All projects are already in this quarter.</span>
+            <span className="text-xs text-zinc-500">All projects are already in this cycle.</span>
           )}
         </div>
       )}
 
       {sorted.length === 0 ? (
         <EmptyState
-          title="No projects in this quarter"
-          description="Add projects to this quarter to start planning."
+          title="No projects in this cycle"
+          description="Add projects to this cycle to start planning."
         />
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
@@ -274,43 +221,34 @@ export default function PortfolioDashboardClient() {
                     quarter,
                     estimatedPersonWeeks: qp.estimatedPersonWeeks,
                     people,
-                    quarterPeople,
+                    cyclePeople,
                     activeAllocations: allocations,
                   })
                   : null;
                 const cumulative = cumulativeEstimatedByProjectId.get(qp.id) ?? 0;
-                const isOverCapacity = capacitySummary !== null && cumulative > capacitySummary.totalAvailablePersonWeeks;
                 const remainingCapacity = capacitySummary
                   ? Number((capacitySummary.totalAvailablePersonWeeks - cumulative).toFixed(1))
                   : null;
 
-                const isAboveLine = lineAfter === null || index <= lineAfter;
-                const isDragTarget = dragOverIndex === index && !draggingLine;
+                const isAboveLine = lineAfter < 0 || index <= lineAfter;
+                const isDragTarget = dragOverIndex === index;
 
                 // The capacity line divider renders AFTER this row
-                const showLineAfterRow = lineAfter !== null && index === lineAfter;
+                const showLineAfterRow = lineAfter !== null && lineAfter >= 0 && index === lineAfter;
 
                 return (
                   <React.Fragment key={qp.id}>
                     <tr
                       draggable
                       onDragStart={(e) => handleRowDragStart(e, index)}
-                      onDragOver={(e) => {
-                        handleRowDragOver(e, index);
-                        handleLineDragOverRow(e);
-                      }}
-                      onDrop={(e) => {
-                        handleRowDrop(e, index);
-                        handleLineDropOnRow(e, index);
-                      }}
+                      onDragOver={(e) => handleRowDragOver(e, index)}
+                      onDrop={(e) => handleRowDrop(e, index)}
                       onDragEnd={handleDragEnd}
                       className={[
                         'group transition-colors',
-                        isOverCapacity
-                          ? 'bg-rose-950/20 hover:bg-rose-950/30'
-                          : isAboveLine
-                            ? 'hover:bg-white/[0.04]'
-                            : 'bg-rose-950/20 hover:bg-rose-950/30',
+                        isAboveLine
+                          ? 'hover:bg-white/[0.04]'
+                          : 'bg-rose-950/20 hover:bg-rose-950/30',
                         isDragTarget ? 'outline outline-2 outline-sky-400/50' : '',
                       ].join(' ')}
                     >
@@ -344,7 +282,7 @@ export default function PortfolioDashboardClient() {
                       <td className="py-3 pr-4 text-zinc-200">
                         <InlineEditNumber
                           value={qp.estimatedPersonWeeks ?? 0}
-                          onSave={(value) => updateQuarterProjectEstimate(qp.id, value)}
+                          onSave={(value) => updateCycleProjectEstimate(qp.id, value)}
                           min={0}
                           max={999}
                           suffix="pw"
@@ -355,7 +293,7 @@ export default function PortfolioDashboardClient() {
                         {capacity ? `${capacity.reservedPersonWeeks}pw` : '—'}
                         {capacity && <span className="ml-1 text-xs text-zinc-500">({capacity.reservedWeeklyPeople}/wk)</span>}
                       </td>
-                      <td className={`py-3 pr-4 tabular-nums ${isOverCapacity ? 'text-rose-400' : 'text-zinc-200'}`}>
+                      <td className={`py-3 pr-4 tabular-nums ${!isAboveLine ? 'text-rose-400' : 'text-zinc-200'}`}>
                         {capacitySummary ? `${cumulative}pw` : '—'}
                       </td>
                       <td className={`py-3 pr-4 tabular-nums ${
@@ -375,32 +313,10 @@ export default function PortfolioDashboardClient() {
                     {showLineAfterRow && (
                       <tr key={`line-${qp.id}`} className="select-none">
                         <td colSpan={12} className="p-0">
-                          <div
-                            draggable
-                            onDragStart={handleLineDragStart}
-                            onDragEnd={handleDragEnd}
-                            className="group relative flex cursor-ns-resize items-center gap-2 border-y border-rose-500/60 bg-rose-500/10 px-3 py-1 hover:bg-rose-500/20"
-                            title="Drag to move the capacity line"
-                          >
+                          <div className="relative flex items-center gap-2 border-y border-rose-500/60 bg-rose-500/10 px-3 py-1">
                             <span className="text-xs font-semibold text-rose-400 uppercase tracking-widest">
                               ↑ capacity ends here · no capacity ↓
                             </span>
-                            <div className="ml-auto flex items-center gap-1">
-                              <button
-                                onClick={moveLineUp}
-                                className="rounded px-1.5 py-0.5 text-xs text-rose-400 hover:bg-rose-500/20 hover:text-rose-200"
-                                title="Move line up"
-                              >
-                                ↑
-                              </button>
-                              <button
-                                onClick={moveLineDown}
-                                className="rounded px-1.5 py-0.5 text-xs text-rose-400 hover:bg-rose-500/20 hover:text-rose-200"
-                                title="Move line down"
-                              >
-                                ↓
-                              </button>
-                            </div>
                           </div>
                         </td>
                       </tr>

@@ -12,7 +12,7 @@ const navItems = [
   { href: '/projects',  label: 'Projects' },
   { href: '/people',    label: 'People' },
   { href: '/subteams',  label: 'Subteams' },
-  { href: '/quarters',  label: 'Quarters' },
+  { href: '/cycles',    label: 'Cycles' },
 ];
 
 export function AppNav() {

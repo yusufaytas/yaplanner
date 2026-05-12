@@ -1,5 +1,5 @@
 import { db } from './db';
-import { listResolvedQuarters } from './quarters';
+import { listResolvedCycles } from './cycles';
 import type { Allocation, Person, Project } from './types';
 
 function isSubteamDeliveryAllocation(allocation: Allocation): boolean {
@@ -87,15 +87,15 @@ export async function getSubteamsPageData() {
 }
 
 export async function getSubteamPageData(subteamId: string) {
-  const [subteam, people, quarters, projects, allocations, quarterPeople] = await Promise.all([
+  const [subteam, people, quarters, projects, allocations, cyclePeople] = await Promise.all([
     db.subteams.get(subteamId),
     db.people.orderBy('name').toArray(),
-    listResolvedQuarters(),
+    listResolvedCycles(),
     db.projects.toArray(),
     db.allocations.toArray(),
-    db.quarterPeople.toArray(),
+    db.cyclePeople.toArray(),
   ]);
-  return { subteam, people, quarters, projects, allocations, quarterPeople };
+  return { subteam, people, quarters, projects, allocations, cyclePeople };
 }
 
 export async function createSubteam(params: { id: string; name: string; purpose: string | null }) {
@@ -109,7 +109,31 @@ export async function createSubteam(params: { id: string; name: string; purpose:
 }
 
 export async function deleteSubteam(subteamId: string) {
-  await db.subteams.delete(subteamId);
+  await db.transaction('rw', [db.subteams, db.projects, db.people, db.cyclePeople], async () => {
+    const [projects, people, cyclePeople] = await Promise.all([
+      db.projects.where('subteamId').equals(subteamId).toArray(),
+      db.people.where('subteamId').equals(subteamId).toArray(),
+      db.cyclePeople.where('subteamId').equals(subteamId).toArray(),
+    ]);
+
+    if (projects.length > 0) {
+      throw new Error('Cannot delete a subteam that still owns projects.');
+    }
+
+    if (people.length > 0) {
+      await db.people.bulkPut(
+        people.map((person) => ({ ...person, subteamId: null })),
+      );
+    }
+
+    if (cyclePeople.length > 0) {
+      await db.cyclePeople.bulkPut(
+        cyclePeople.map((person) => ({ ...person, subteamId: null })),
+      );
+    }
+
+    await db.subteams.delete(subteamId);
+  });
 }
 
 export async function updateSubteam(

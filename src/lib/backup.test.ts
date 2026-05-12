@@ -10,7 +10,7 @@ vi.mock('./db', () => {
     bulkPut: vi.fn().mockResolvedValue(undefined),
   });
 
-  const tables = ['people', 'subteams', 'projects', 'quarters', 'quarterProjects', 'quarterPeople', 'allocations'];
+  const tables = ['people', 'subteams', 'projects', 'cycles', 'cycleProjects', 'cyclePeople', 'allocations'];
   const db: Record<string, ReturnType<typeof makeTable>> & { transaction: ReturnType<typeof vi.fn> } = {
     transaction: vi.fn(async (_mode: string, _tables: unknown[], fn: () => Promise<void>) => fn()),
   } as never;
@@ -29,9 +29,9 @@ const samplePayload: BackupPayload = {
     people: [{ id: 'p1', name: 'Alice' }],
     subteams: [],
     projects: [],
-    quarters: [],
-    quarterProjects: [],
-    quarterPeople: [],
+    cycles: [],
+    cycleProjects: [],
+    cyclePeople: [],
     allocations: [],
   },
 };
@@ -68,9 +68,9 @@ describe('importBackupText', () => {
         people: [{ id: 'p1' }],
         subteams: [],
         projects: [],
-        quarters: [],
-        quarterProjects: [],
-        quarterPeople: [],
+        cycles: [],
+        cycleProjects: [],
+        cyclePeople: [],
         allocations: [],
       },
     });
@@ -87,9 +87,9 @@ describe('importBackupText', () => {
       people: [{ id: 'p2' }],
       subteams: [],
       projects: [],
-      quarters: [],
-      quarterProjects: [],
-      quarterPeople: [],
+      cycles: [],
+      cycleProjects: [],
+      cyclePeople: [],
       allocations: [],
     });
     await importBackupText(json);
@@ -105,9 +105,9 @@ describe('importBackupText', () => {
         people: 'not-an-array',
         subteams: [],
         projects: [],
-        quarters: [],
-        quarterProjects: [],
-        quarterPeople: [],
+        cycles: [],
+        cycleProjects: [],
+        cyclePeople: [],
         allocations: [],
       },
     });
@@ -124,9 +124,9 @@ describe('importBackupText', () => {
         people: [],
         subteams: [],
         projects: [],
-        quarters: [],
-        quarterProjects: [],
-        quarterPeople: [],
+        cycles: [],
+        cycleProjects: [],
+        cyclePeople: [],
         allocations: [],
       },
     });

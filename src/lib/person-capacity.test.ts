@@ -7,24 +7,24 @@ import {
   getPersonProjectCapacityShares,
   getProjectCapacitySummary,
   getPersonRemainingAllocationPct,
-  getQuarterPersonAvailableWeeks,
-  getQuarterPersonProjectSummary,
+  getCyclePersonAvailableWeeks,
+  getCyclePersonProjectSummary,
 } from './person-capacity';
-import type { Allocation, Person, Quarter, QuarterPerson } from './types';
+import type { Allocation, Person, Cycle, CyclePerson } from './types';
 
-const quarter: Quarter = {
+const quarter: Cycle = {
   id: 'q1',
   name: '2026-Q2',
   startDate: '2026-04-01',
   endDate: '2026-06-30',
   status: 'active',
   createdAt: '2026-03-01T00:00:00.000Z',
-  createdFromQuarterId: null,
+  createdFromCycleId: null,
   capacityLineAfter: null,
   overhead: { items: [] },
 };
 
-const quarterWithOverhead: Quarter = {
+const quarterWithOverhead: Cycle = {
   ...quarter,
   id: 'q2',
   name: '2026-Q2-overhead',
@@ -44,20 +44,20 @@ const engineer: Person = {
   createdAt: '2026-03-01T00:00:00.000Z',
 };
 
-const engineerQuarter: QuarterPerson = {
+const engineerCycle: CyclePerson = {
   id: 'qp-1',
-  quarterId: quarter.id,
+  cycleId: quarter.id,
   personId: engineer.id,
   subteamId: 'subteam-1',
   inactive: false,
-  quarterCapacity: 80,
+  cycleCapacity: 80,
   overheadOverride: null,
 };
 
 function makeAllocation(overrides: Partial<Allocation> & Pick<Allocation, 'id' | 'personId' | 'projectId' | 'role'>): Allocation {
   return {
     id: overrides.id,
-    quarterId: overrides.quarterId ?? quarter.id,
+    cycleId: overrides.cycleId ?? quarter.id,
     personId: overrides.personId,
     projectId: overrides.projectId,
     role: overrides.role,
@@ -69,15 +69,15 @@ function makeAllocation(overrides: Partial<Allocation> & Pick<Allocation, 'id' |
 
 describe('person capacity', () => {
   it('uses actual quarter duration rather than overlapping Monday buckets for available weeks', () => {
-    expect(getQuarterPersonAvailableWeeks(quarter, engineer, engineerQuarter)).toBe(10.4);
+    expect(getCyclePersonAvailableWeeks(quarter, engineer, engineerCycle)).toBe(10.4);
   });
 
   it('treats allocation percentages as shares of effective capacity', () => {
     const allocations = [
-      makeAllocation({ id: 'a1', quarterId: quarterWithOverhead.id, personId: engineer.id, projectId: 'p1', role: 'Engineer', percentage: 10 }),
+      makeAllocation({ id: 'a1', cycleId: quarterWithOverhead.id, personId: engineer.id, projectId: 'p1', role: 'Engineer', percentage: 10 }),
     ];
 
-    const summary = getQuarterPersonProjectSummary(quarterWithOverhead, engineer, engineerQuarter, allocations);
+    const summary = getCyclePersonProjectSummary(quarterWithOverhead, engineer, engineerCycle, allocations);
 
     expect(summary.capacityLimit).toBe(64);
     expect(summary.effectiveCapacity).toBe(64);
@@ -94,8 +94,8 @@ describe('person capacity', () => {
 
     expect(getPersonRemainingAllocationPct({
       person: engineer,
-      quarterPerson: engineerQuarter,
-      quarterId: quarter.id,
+      cyclePerson: engineerCycle,
+      cycleId: quarter.id,
       allocations,
     })).toBe(10);
   });
@@ -109,16 +109,16 @@ describe('person capacity', () => {
     expect(getMaxProjectAllocationPercentage({
       person: engineer,
       projectId: 'p1',
-      quarterPerson: engineerQuarter,
-      quarterId: quarter.id,
+      cyclePerson: engineerCycle,
+      cycleId: quarter.id,
       allocations,
     })).toBe(60);
 
     expect(clampProjectAllocationPercentage({
       person: engineer,
       projectId: 'p1',
-      quarterPerson: engineerQuarter,
-      quarterId: quarter.id,
+      cyclePerson: engineerCycle,
+      cycleId: quarter.id,
       allocations,
       requestedPercentage: 90,
     })).toBe(60);
@@ -133,8 +133,8 @@ describe('person capacity', () => {
 
     expect(getPersonProjectCapacityShares({
       person: engineer,
-      quarterPerson: engineerQuarter,
-      quarterId: quarter.id,
+      cyclePerson: engineerCycle,
+      cycleId: quarter.id,
       allocations,
     })).toEqual([
       { projectId: 'p1', percentage: 50, isEvenSplit: false },
@@ -149,7 +149,7 @@ describe('person capacity', () => {
       makeAllocation({ id: 'a2', personId: engineer.id, projectId: 'p2', role: 'Engineer', percentage: 40 }),
     ];
 
-    const summary = getQuarterPersonProjectSummary(quarter, engineer, engineerQuarter, allocations);
+    const summary = getCyclePersonProjectSummary(quarter, engineer, engineerCycle, allocations);
 
     expect(summary.capacityLimit).toBe(80);
     expect(summary.totalAllocatedPct).toBe(90);
@@ -159,7 +159,7 @@ describe('person capacity', () => {
 
   it('uses effective-capacity share when reserving project person-weeks', () => {
     const allocations = [
-      makeAllocation({ id: 'a1', quarterId: quarterWithOverhead.id, personId: engineer.id, projectId: 'p1', role: 'Engineer', percentage: 10 }),
+      makeAllocation({ id: 'a1', cycleId: quarterWithOverhead.id, personId: engineer.id, projectId: 'p1', role: 'Engineer', percentage: 10 }),
     ];
 
     expect(getProjectCapacitySummary({
@@ -167,7 +167,7 @@ describe('person capacity', () => {
       quarter: quarterWithOverhead,
       estimatedPersonWeeks: 5,
       people: [engineer],
-      quarterPeople: [engineerQuarter],
+      cyclePeople: [engineerCycle],
       activeAllocations: allocations,
     })).toEqual({
       estimatedPersonWeeks: 5,
@@ -185,7 +185,7 @@ describe('person capacity', () => {
       makeAllocation({ id: 'b1', personId: engineer.id, projectId: 'p1', role: 'Engineer', percentage: 60 }),
     ];
 
-    expect(getAssignableEngineers([engineer], [engineerQuarter], quarter, saturatedAllocations)).toEqual([]);
-    expect(getAssignableEngineers([engineer], [engineerQuarter], quarter, availableAllocations)).toEqual([engineer]);
+    expect(getAssignableEngineers([engineer], [engineerCycle], quarter, saturatedAllocations)).toEqual([]);
+    expect(getAssignableEngineers([engineer], [engineerCycle], quarter, availableAllocations)).toEqual([engineer]);
   });
 });

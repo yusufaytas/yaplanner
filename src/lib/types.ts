@@ -48,10 +48,10 @@ export interface ProjectLink {
   url: string;
 }
 
-// ─── Quarter Planning Entities ────────────────────────────────────────────────
+// ─── Cycle Planning Entities ────────────────────────────────────────────────
 // Scoped to a specific planning cycle.
 
-export type QuarterStatus = 'draft' | 'active' | 'closed' | 'archived';
+export type CycleStatus = 'draft' | 'active' | 'closed' | 'archived';
 
 /** A single overhead item — e.g. "Meetings", "oncall", "Learning" */
 export interface OverheadItem {
@@ -61,29 +61,29 @@ export interface OverheadItem {
   value: number;    // 0–100 for pct, 0–N for weeks
 }
 
-/** Quarter-wide overhead defaults — a list of overhead items applied to every person unless overridden */
+/** Cycle-wide overhead defaults — a list of overhead items applied to every person unless overridden */
 export interface CapacityOverhead {
   items: OverheadItem[];
 }
 
-export interface Quarter {
+export interface Cycle {
   id: string;
   name: string; // e.g. "2026-Q3"
   startDate: string; // ISO date YYYY-MM-DD
   endDate: string; // ISO date YYYY-MM-DD
-  status: QuarterStatus;
+  status: CycleStatus;
   createdAt: string;
-  createdFromQuarterId: string | null;
+  createdFromCycleId: string | null;
   /** Index after which the capacity line is drawn in the priority-sorted list. null = no line set. */
   capacityLineAfter: number | null;
-  /** Quarter-wide overhead defaults */
+  /** Cycle-wide overhead defaults */
   overhead: CapacityOverhead;
 }
 
 /** Per-quarter project planning data */
-export interface QuarterProject {
+export interface CycleProject {
   id: string;
-  quarterId: string;
+  cycleId: string;
   projectId: string; // references global Project
   status: ProjectStatus;
   priority: number | null; // sort order within the quarter portfolio (lower = higher priority)
@@ -95,13 +95,13 @@ export interface QuarterProject {
 }
 
 /** Per-quarter person planning data */
-export interface QuarterPerson {
+export interface CyclePerson {
   id: string;
-  quarterId: string;
+  cycleId: string;
   personId: string; // references global Person
   subteamId: string | null; // subteam assignment for this quarter
   inactive: boolean;
-  quarterCapacity: number; // base capacity % for this quarter (default 100)
+  cycleCapacity: number; // base capacity % for this quarter (default 100)
   /**
    * Per-person overhead override. null = use quarter defaults.
    * When set, replaces the quarter overhead list entirely for this person.
@@ -112,7 +112,7 @@ export interface QuarterPerson {
 
 export interface Allocation {
   id: string;
-  quarterId: string | null;
+  cycleId: string | null;
   personId: string;
   projectId: string | null;
   role: Role;
@@ -123,7 +123,7 @@ export interface Allocation {
 
 export interface Unknown {
   id: string;
-  quarterId: string;
+  cycleId: string;
   title: string;
   description: string; // supports @ mentions
   resolved: boolean;
@@ -136,7 +136,7 @@ export type RiskImpact = 'Low' | 'Medium' | 'High';
 
 export interface Risk {
   id: string;
-  quarterId: string;
+  cycleId: string;
   title: string;
   likelihood: RiskLikelihood;
   impact: RiskImpact;
@@ -153,21 +153,21 @@ export interface Risk {
  *
  * Each item reduces the remaining capacity:
  *   - type 'pct':   multiplies by (1 - value/100)
- *   - type 'weeks': multiplies by (1 - value/totalQuarterWeeks)
+ *   - type 'weeks': multiplies by (1 - value/totalCycleWeeks)
  *
  * Items are applied sequentially (compounding), matching how real overhead works.
  */
 export function computeEffectiveCapacity(
   baseCapacity: number,
   overhead: CapacityOverhead,
-  totalQuarterWeeks: number,
+  totalCycleWeeks: number,
 ): number {
   let effective = baseCapacity;
   for (const item of overhead.items) {
     if (item.type === 'pct') {
       effective *= 1 - item.value / 100;
     } else {
-      const fraction = totalQuarterWeeks > 0 ? item.value / totalQuarterWeeks : 0;
+      const fraction = totalCycleWeeks > 0 ? item.value / totalCycleWeeks : 0;
       effective *= 1 - fraction;
     }
   }
@@ -176,10 +176,10 @@ export function computeEffectiveCapacity(
 
 /** Resolve the overhead to use for a person — person override takes full precedence if set */
 export function resolveOverhead(
-  quarterOverhead: CapacityOverhead,
+  cycleOverhead: CapacityOverhead,
   personOverride: CapacityOverhead | null,
 ): CapacityOverhead {
-  return personOverride ?? quarterOverhead;
+  return personOverride ?? cycleOverhead;
 }
 
 /** Default overhead items used when creating a new quarter */
